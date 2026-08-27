@@ -142,10 +142,10 @@ def draw_JSON_kpts(img_path, kpts: dict):
             draw.text((x + r + 5, y - 10), label, fill="yellow")
     return img
 
-def export_to_yolo(filename, points, img_width, img_height, image_dir, class_id=0):
+def export_to_yolo(filename, points, img_width, img_height, labels_dir, class_id=0):
 
     # Create the labels directory => Consider moving this elsewhere
-    image_dir.mkdir(parents=True, exist_ok=True)
+    labels_dir.mkdir(parents=True, exist_ok=True)
 
     valid_points = [coords for coords in points.values() if coords is not None]
 
@@ -181,7 +181,7 @@ def export_to_yolo(filename, points, img_width, img_height, image_dir, class_id=
 
     # Write a new file to this directory for each set of labels
     txt_fn = Path(filename).with_suffix('.txt').name
-    txt_path = image_dir / txt_fn
+    txt_path = labels_dir / txt_fn
 
     with open(txt_path, "w") as f:
         f.write(final_line)

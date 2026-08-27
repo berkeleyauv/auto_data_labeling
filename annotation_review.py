@@ -8,7 +8,7 @@ from utils import (
     export_to_yolo, 
 )
 
-def launch_qa(json_path, image_dir, server_port, share):
+def launch_qa(json_path, image_dir, server_port):
 
     with open(json_path, "r") as f:
         raw_preds = json.load(f)
@@ -72,7 +72,8 @@ def launch_qa(json_path, image_dir, server_port, share):
             with Image.open(img_path) as img:
                 img_width, img_height = img.size
 
-            export_to_yolo(filename, points, img_width, img_height, image_dir)
+            labels_dir = Path("./data/labels")
+            export_to_yolo(filename, points, img_width, img_height, labels_dir)
 
             # Move onto next image
             new_index = index + 1
@@ -98,7 +99,7 @@ def launch_qa(json_path, image_dir, server_port, share):
             outputs=[curr_idx, img_display]
         )
 
-    app.launch(server_name="0.0.0.0", server_port=server_port, share=share)
+    app.launch(server_name="0.0.0.0", server_port=server_port, share=True)
 
 if __name__ == "__main__":
 
@@ -107,7 +108,6 @@ if __name__ == "__main__":
     parser.add_argument("--json_path", type=str, default="./Test_JSON/raw_predictions.json")
     parser.add_argument("--image_dir", type=str, default="./Test_Images")
     parser.add_argument("--port", type=int, default=7860)
-    parser.add_argument("--share", action="store_true", help="Generate public Gradio link")
 
     args = parser.parse_args()
-    launch_qa(Path(args.json_path), Path(args.image_dir), args.port, args.share)
+    launch_qa(Path(args.json_path), Path(args.image_dir), args.port)
