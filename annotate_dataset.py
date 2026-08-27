@@ -9,7 +9,6 @@ from annotate_frame import process_frame
 
 def process_dataset(input_dir, output_dir, device_str):
 
-    # Setup paths for annotations and exports
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / "raw_predictions.json"
 
@@ -67,6 +66,8 @@ def process_dataset(input_dir, output_dir, device_str):
     return json_path
 
 if __name__ == "__main__":
+
+    # Setup paths for annotations and exports
     parser = argparse.ArgumentParser(description="SAM3 Labeling Inference Runner")
     parser.add_argument("--input_dir", type=str, default="./Test_Images", help="Path to raw images")
     parser.add_argument("--output_dir", type=str, default="./Test_JSON", help="Path to saved prediction JSON")

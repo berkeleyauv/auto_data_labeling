@@ -101,6 +101,8 @@ def launch_qa(json_path, image_dir, server_port, share):
     app.launch(server_name="0.0.0.0", server_port=server_port, share=share)
 
 if __name__ == "__main__":
+
+    # Setup paths for JSON and exported labels
     parser = argparse.ArgumentParser(description="YOLO Keypoint QA")
     parser.add_argument("--json_path", type=str, default="./Test_JSON/raw_predictions.json")
     parser.add_argument("--image_dir", type=str, default="./Test_Images")
