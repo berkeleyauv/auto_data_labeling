@@ -35,8 +35,12 @@ source .venv/bin/activate
 ```
 
 **4.**
-Install the necessary PyTorch and computer vision libraries from the requirements file:
+Install the necessary libraries from the requirements file:
 ```bash
+# Install pytorch with CUDA support
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Install the other packages
 uv pip install -r requirements.txt
 ```
 

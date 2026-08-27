@@ -1,8 +1,6 @@
-torch
 Pillow
 transformers
 gradio
 opencv-python
 numpy
-torchvision
 matplotlib
