@@ -55,8 +55,8 @@ Submit the inference script to the Slurm scheduler:
 ```bash
 sbatch submit_inference.sh
 ```
-- '--input_dir' is where to pull the images from
-- '--output_dir' is where to save the raw_predictions.json file to
+- `--input_dir` is where to pull the images from
+- `--output_dir` is where to save the raw_predictions.json file to
 
 To see live outputs and track inference progress:
 ```bash
@@ -73,8 +73,8 @@ Launch the Gradio UI
 ```base
 bash launch_QA.sh
 ```
-- '--json_path' is where the generated predictions are
-- '--image_dir' is where the raw images are for rendering
+- `--json_path` is where the generated predictions are
+- `--image_dir` is where the raw images are for rendering
 
 **2.** Review the annotations:
 - Click the public gradio.live link generated in your terminal to open the UI in your web browser.
