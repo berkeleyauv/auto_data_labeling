@@ -7,7 +7,7 @@
 # Force job to run in folder called from
 cd $SLURM_SUBMIT_DIR
 
-module load cuda python
+# module load cuda python
 source .venv/bin/activate 
 
 # python annotate_dataset.py \
