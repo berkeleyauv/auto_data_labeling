@@ -9,46 +9,46 @@ This pipeline supports CUDA, MPS, and CPU, but running it on a GPU cluster is hi
 2. **Hugging Face Authentication:** 
 You will need a valid Hugging Face access token to download the model weights. Run the following command in your terminal and follow the prompts to paste your token: 
 ```bash 
+hf auth login
+```
+
+If hf is not found in your path, fall back to:
+```bash
 huggingface-cli login
 ```
 
 ## Installation
 **1.**
-Install `uv` once per machine:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-*(or `brew install uv` on macOS).*
-
-**2.**
 Clone this auto-labeling repository and navigate into it:
 ```bash
 git clone https://github.com/berkeleyauv/auto_data_labeling.git
 cd auto_data_labeling
 ```
 
-**3.**
-Create the virtual environment pinning Python 3.11, which creates a `.venv/` directory:
+**2.**
+Create and activate the virtual environment:
 ```bash
-uv venv --python 3.11
+python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-**4.**
-Install the necessary libraries from the requirements file:
+**3.**
+Install the necessary dependencies:
 ```bash
-# Install pytorch with CUDA support
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install --upgrade pip
 
-# Install the other packages
-uv pip install -r requirements.txt
+# Install PyTorch with CUDA 12.1 support 
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Install repository dependencies
+pip install -r requirements.txt
 ```
 
 ## Data Preparation
 **1.**
 Inside your cloned `auto_data_labeling` repository, create a directory to hold your raw images:
 ```bash
-mkdir -p data/raw_images
+mkdir -p data/your_dataset_name
 ```
 
 **2.**
@@ -57,7 +57,7 @@ Place all the raw dataset images you want to annotate (must be .png, .jpg, or .j
 ## Inferencing
 Submit the inference script to the Slurm scheduler:
 ```bash
-sbatch submit_inference.sh
+sbatch submit_inference.sh --input_dir ./data/your_dataset_name --output_dir ./data/your_dataset_name/predictions
 ```
 - `--input_dir` is where to pull the images from
 - `--output_dir` is where to save the raw_predictions.json file to
@@ -74,11 +74,11 @@ tail -f slurm-123456.out
 ## Human Review
 **1.**
 Launch the Gradio UI
-```base
-bash launch_QA.sh
+```bash
+bash launch_QA.sh --image_dir ./data/your_dataset_name --json_path ./data/your_dataset_name/predictions/raw_predictions.json
 ```
-- `--json_path` is where the generated predictions are
 - `--image_dir` is where the raw images are for rendering
+- `--json_path` is where the generated predictions are
 
 **2.** Review the annotations:
 - Click the public gradio.live link generated in your terminal to open the UI in your web browser.
@@ -88,5 +88,5 @@ bash launch_QA.sh
 - When finished, a completion screen will appear.
 
 ## Results
-- A ./data/labels directory will have been created
+- A ./data/your_dataset_name/labels directory will have been created
 - Each image has a corresponding .txt file containing the normalized keypoints and bounding boxes of the gate
