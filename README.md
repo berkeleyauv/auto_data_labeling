@@ -4,10 +4,10 @@ Automated segmentation and bounding box labeling pipeline using SAM3. This  auto
 
 ## Prerequisites
 1. **Compute Environment:** 
-This pipeline supports CUDA, MPS, and CPU, but running it on a GPU cluster is highly recommended for optimal inferencing speeds
+This pipeline supports CUDA, MPS, and CPU, but running it on a GPU cluster is highly recommended for optimal inferencing speeds (**Note**: The instructions below are tailored specifically for **cluster** setup)
 
 2. **Hugging Face Authentication:** 
-You will need a valid Hugging Face access token to download the model weights. Run the following command in your terminal and follow the prompts to paste your token: 
+You will need a valid Hugging Face access token to download the model weights. Run the following command in your terminal and follow the prompts to activate your token: 
 ```bash 
 hf auth login
 ```
