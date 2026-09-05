@@ -17,6 +17,8 @@ If hf is not found in your path, fall back to:
 huggingface-cli login
 ```
 
+🚨 NOTE: Slurm jobs run non-interactively! Make sure that you login before submitting any jobs! 🚨
+
 ## Installation
 **1.**
 Clone this auto-labeling repository and navigate into it:
@@ -72,6 +74,9 @@ tail -f slurm-123456.out
 ```
 
 ## Human Review
+
+Before you start, double check that your .venv is activated!
+
 **1.**
 Launch the Gradio UI
 ```bash
@@ -81,7 +86,7 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name --json_path ./data/your_d
 - `--json_path` is where the generated predictions are
 
 **2.** Review the annotations:
-- Click the public gradio.live link generated in your terminal to open the UI in your web browser.
+- Click the **public gradio.live** link generated in your terminal to open the UI in your web browser.
 - Review the predicted corners (cyan dots) on the underwater gate frame.
 - If a corner is incorrect, select the corresponding radio button (e.g., TL for Top-Left) and click on the image to manually move the point.
 - Click Accept & Export to save the frame and move to the next image.
