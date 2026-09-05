@@ -69,8 +69,8 @@ if __name__ == "__main__":
 
     # Setup paths for annotations and exports
     parser = argparse.ArgumentParser(description="SAM3 Labeling Inference Runner")
-    parser.add_argument("--input_dir", type=str, default="./Test_Images", help="Path to raw images")
-    parser.add_argument("--output_dir", type=str, default="./Test_JSON", help="Path to saved prediction JSON")
+    parser.add_argument("--input_dir", type=str, default="./data/raw_images", help="Path to raw images")
+    parser.add_argument("--output_dir", type=str, default="./data/predictions", help="Path to saved prediction JSON")
     parser.add_argument("--device", type=str, default="", help="Override torch device (eg. cuda:0, cpu)")
 
     args= parser.parse_args()
