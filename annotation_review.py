@@ -72,7 +72,8 @@ def launch_qa(json_path, image_dir, server_port):
             with Image.open(img_path) as img:
                 img_width, img_height = img.size
 
-            labels_dir = Path("./data/labels")
+            labels_dir = image_dir.parent / "labels"
+            labels_dir.mkdir(parents=True, exist_ok=True)
             export_to_yolo(filename, points, img_width, img_height, labels_dir)
 
             # Move onto next image
