@@ -34,7 +34,7 @@ pip install -r requirements.txt
 ```
 
 ## Hugging Face Authentication
-You will need a valid Hugging Face access token to download the model weights. Make sure your virtual environment is activated. Run the following command in your terminal and follow the prompts to activate your token: 
+You will need a valid Hugging Face access token to download the model weights. Make sure your virtual environment is **activated** or the following instructions will error. Run the following command in your terminal and follow the prompts to activate your token: 
 ```bash 
 hf auth login
 ```
@@ -46,12 +46,11 @@ huggingface-cli login
 
 🚨 NOTE: Slurm jobs run non-interactively! Make sure that you login before submitting any jobs! 🚨
 
-
 ## Data Preparation
 **1.**
 Inside your cloned `auto_data_labeling` repository, create a directory to hold your raw images:
 ```bash
-mkdir -p data/your_dataset_name
+mkdir -p data/your_dataset_name/raw_imgs
 ```
 
 **2.**
@@ -60,7 +59,7 @@ Place all the raw dataset images you want to annotate (must be .png, .jpg, or .j
 ## Inferencing
 Submit the inference script to the Slurm scheduler:
 ```bash
-sbatch submit_inference.sh --input_dir ./data/your_dataset_name --output_dir ./data/your_dataset_name/predictions
+sbatch submit_inference.sh --input_dir ./data/your_dataset_name/raw_imgs --output_dir ./data/your_dataset_name/predictions
 ```
 - `--input_dir` is where to pull the images from
 - `--output_dir` is where to save the raw_predictions.json file to
@@ -70,18 +69,21 @@ To see live outputs and track inference progress:
 # Check your job ID
 squeue -u $USER
 
-# Replace 123456 with your actual job ID
+# To see how many jobs are before you
+squeue -p ocf-hpc
+
+# Replace 123456 with your actual job ID to view a live inference log
 tail -f slurm-123456.out
 ```
 
 ## Human Review
 
-Before you start, double check that your .venv is activated!
+Before you start, double-check that your .venv is activated!
 
 **1.**
 Launch the Gradio UI
 ```bash
-bash launch_QA.sh --image_dir ./data/your_dataset_name --json_path ./data/your_dataset_name/predictions/raw_predictions.json
+bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./data/your_dataset_name/predictions/raw_predictions.json
 ```
 - `--image_dir` is where the raw images are for rendering
 - `--json_path` is where the generated predictions are
