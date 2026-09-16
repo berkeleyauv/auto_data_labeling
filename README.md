@@ -96,5 +96,7 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 - When finished, a completion screen will appear.
 
 ## Results
-- A ./data/your_dataset_name/labels directory will have been created
-- Each image has a corresponding .txt file containing the normalized keypoints and bounding boxes of the gate
+data/your_dataset_name/
+├── raw_imgs/         <-- Your raw input frames (.png, .jpg)
+├── predictions/      <-- Output from inference (raw_predictions.json)
+└── labels/           <-- Output from Gradio QA (YOLO .txt files)
