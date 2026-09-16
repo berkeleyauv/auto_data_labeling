@@ -46,6 +46,40 @@ huggingface-cli login
 
 🚨 NOTE: Slurm jobs run non-interactively! Make sure that you login before submitting any jobs! 🚨
 
+## Dataset Specs & Standards
+**1. Folder Structure:** 
+All datasets live under `./data/` and should maintain this 3-subfolder directory layout: 
+
+```text
+data/your_dataset_name/
+├── raw_imgs/         # Original input frames (.jpg, .jpeg, .png)
+├── predictions/      # Raw model outputs (raw_predictions.json)
+└── labels/           # Final exported annotations (.txt files)
+```
+
+**2. Class IDs**
+* `0`: `gate`
+
+**3. Keypoint Ordering (YOLO-Pose):**
+When reviewing and exporting keypoints, adhere to the 4-corner index convention:
+* Index 0 (1st point): Top-Left (`TL`)
+* Index 1 (2nd point): Top-Right (`TR`)
+* Index 2 (3rd point): Bottom-Left (`BL`)
+* Index 3 (4th point): Bottom-Right (`BR`)
+
+**4. Label Format:**
+Each exported `.txt` file in `labels/` follows the normalized YOLO-pose format
+
+```text
+<class-id> <x_center> <y_center> <width> <height> <px1> <py1> <v1> ...
+```
+
+where coordinates are normalized between `0.0` and `1.0`, `v=0` indicates a corner keypoint not in view, and `v=2` indicates a visible keypoint.
+
+**5. Naming Conventions & Dataset Splitting**
+* **File Names:** Label files retain the exact same base filename as their image (e.g., `frame_001.jpg` -> `frame_001.txt`)
+* **Train/Val/Test Policy:** Split final verified pairs into an 80/10/10 ratio (`train/`, `val/`, `test/`).
+
 ## Data Preparation
 **1.**
 Inside your cloned `auto_data_labeling` repository, create a directory to hold your raw images:
@@ -94,11 +128,3 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 - If a corner is incorrect, select the corresponding radio button (e.g., TL for Top-Left) and click on the image to manually move the point.
 - Click Accept & Export to save the frame and move to the next image.
 - When finished, a completion screen will appear.
-
-## Results
-```text
-data/2025_IIT_SAMPLE/
-├── raw_imgs/         <-- Your input pool frames (.png, .jpg)
-├── predictions/      <-- Output from inference (raw_predictions.json)
-└── labels/           <-- Output from Gradio QA (YOLO .txt files)
-```
