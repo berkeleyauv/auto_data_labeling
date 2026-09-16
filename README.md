@@ -96,7 +96,9 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 - When finished, a completion screen will appear.
 
 ## Results
-data/your_dataset_name/
-├── raw_imgs/         <-- Your raw input frames (.png, .jpg)
+```text
+data/2025_IIT_SAMPLE/
+├── raw_imgs/         <-- Your input pool frames (.png, .jpg)
 ├── predictions/      <-- Output from inference (raw_predictions.json)
 └── labels/           <-- Output from Gradio QA (YOLO .txt files)
+```
