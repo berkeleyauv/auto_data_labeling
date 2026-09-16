@@ -6,19 +6,6 @@ Automated segmentation and bounding box labeling pipeline using SAM3. This  auto
 1. **Compute Environment:** 
 This pipeline supports CUDA, MPS, and CPU, but running it on a GPU cluster is highly recommended for optimal inferencing speeds (**Note**: The instructions below are tailored specifically for **cluster** setup)
 
-2. **Hugging Face Authentication:** 
-You will need a valid Hugging Face access token to download the model weights. Run the following command in your terminal and follow the prompts to activate your token: 
-```bash 
-hf auth login
-```
-
-If hf is not found in your path, fall back to:
-```bash
-huggingface-cli login
-```
-
-🚨 NOTE: Slurm jobs run non-interactively! Make sure that you login before submitting any jobs! 🚨
-
 ## Installation
 **1.**
 Clone this auto-labeling repository and navigate into it:
@@ -45,6 +32,20 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 # Install repository dependencies
 pip install -r requirements.txt
 ```
+
+## Hugging Face Authentication
+You will need a valid Hugging Face access token to download the model weights. Make sure your virtual environment is activated. Run the following command in your terminal and follow the prompts to activate your token: 
+```bash 
+hf auth login
+```
+
+If hf is not found in your path, fall back to:
+```bash
+huggingface-cli login
+```
+
+🚨 NOTE: Slurm jobs run non-interactively! Make sure that you login before submitting any jobs! 🚨
+
 
 ## Data Preparation
 **1.**
