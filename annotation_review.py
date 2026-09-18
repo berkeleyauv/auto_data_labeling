@@ -10,6 +10,9 @@ from utils import (
 
 def launch_qa(json_path, image_dir, server_port):
 
+    print(f"Reading JSON from {json_path}")
+    print(f"Reading images from {image_dir}")
+
     with open(json_path, "r") as f:
         raw_preds = json.load(f)
 
