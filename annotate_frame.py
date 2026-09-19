@@ -5,6 +5,7 @@ import numpy as np
 from utils import (
     keep_largest_component,
     get_labeled_corners,
+    get_labeled_corners_area,
 )
 
 confidence_threshold = 0.5
@@ -106,6 +107,7 @@ def process_frame(image, processor, model, prompts, device):
 
     # Combine all collected data and draw
     if all_masks:
+        combined_masks = torch.cat(all_masks, dim=0)
         combined_boxes = torch.cat(all_boxes, dim=0)
         combined_scores = torch.cat(all_scores, dim=0)
         
@@ -113,7 +115,8 @@ def process_frame(image, processor, model, prompts, device):
         print(f"Scores: {combined_scores.tolist()}")
         print("Keypoints stored sucessfully")
 
-        return get_labeled_corners(combined_boxes, image.width)
+        # return get_labeled_corners(combined_boxes, image.width)
+        return get_labeled_corners_area(combined_masks, image.width)
     else:
         print("No instances found for any of the provided prompts.")
         return None

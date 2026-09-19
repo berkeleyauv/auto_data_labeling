@@ -126,6 +126,87 @@ def get_labeled_corners(combined_boxes, image_width):
         "BR": (right_x_center, ry_max),
     }
 
+def get_labeled_corners_area(combined_masks, image_width):
+    """
+    Get labeled corners using area averaging
+    """
+
+    if len(combined_masks) == 0:
+        return {}
+
+    mask_data = []
+
+    for mask in combined_masks:
+
+        # CUDA Tensor -> CPU NumPy for np.where
+        if hasattr(mask, "cpu"):
+            mask = mask.cpu().numpy()
+
+        # obtain all (y,x) coords of mask
+        y_coords, x_coords = np.where(mask > 0)
+
+        if len(y_coords) == 0:
+            continue
+
+        y_min, y_max = np.min(y_coords), np.max(y_coords)
+        post_height = y_max - y_min
+
+        # Isolate top/bottom 5% of pixels
+        region = post_height * 0.05 # consider making this a constant
+
+        # Average top pixels
+        top_pixels = y_coords <= (y_min + region)
+        top_pt = (np.mean(x_coords[top_pixels]), np.mean(y_coords[top_pixels]))
+
+        # Average bottom pixels
+        bot_pixels = y_coords >= (y_max - region)
+        bot_pt = (np.mean(x_coords[bot_pixels]), np.mean(y_coords[bot_pixels]))
+
+        # Average center of post for sorting purposes
+        center_x = np.mean(x_coords)
+
+        mask_data.append({
+            "center_x": center_x,
+            "top": top_pt,
+            "bottom": bot_pt,
+        })
+
+    if len(mask_data) == 0:
+        return {}
+
+    # Sort by x
+    mask_data = sorted(mask_data, key=lambda d: d["center_x"])    
+
+    # Single post case    
+    if len(mask_data) == 1:
+        post = mask_data[0]
+        if post["center_x"] < (image_width / 2):
+            return {
+                "TL": post["top"],
+                "TR": None,
+                "BL": post["bottom"],
+                "BR": None,
+            }
+        else:
+            return {
+                "TL": None,
+                "TR": post["top"],
+                "BL": None,
+                "BR": post["bottom"],
+            }
+
+    # Gate in full view
+    left_post = mask_data[0]
+    right_post = mask_data[-1]
+
+    return {
+        "TL": left_post["top"],
+        "TR": right_post["top"],
+        "BL": left_post["bottom"],
+        "BR": right_post["bottom"],
+    }
+
+
 # ---------------------------------------
 #               FRONTEND
 # ---------------------------------------
