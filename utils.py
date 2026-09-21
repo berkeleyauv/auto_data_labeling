@@ -38,7 +38,7 @@ def draw_global_corners(image, combined_boxes):
         return image
 
     draw = ImageDraw.Draw(image)
-    r = 12  # Radius of the keypoint dot
+    r = 6  # Radius of the keypoint dot
 
     try:
         large_font = ImageFont.truetype("arial.ttf", size=30)
@@ -58,24 +58,47 @@ def keep_largest_component(mask_tensor, original_box):
     # Convert tensor into a cv2 compatible mask
     mask_np = (mask_tensor.cpu().numpy() * 255).astype(np.uint8)
 
+    # Mild morpohological opening to make the reflection/post distinction clearer
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
+    mask_np = cv2.morphologyEx(mask_np, cv2.MORPH_OPEN, kernel)    
+
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_np)
 
     # Ignore if there is no separation
     if num_labels <= 1:
         return mask_np, original_box
 
-    # Isolate pixle counts for each detected label
-    areas = stats[1:, cv2.CC_STAT_AREA]
-    largest_label = 1 + np.argmax(areas)
+    # ---------------------------------------------
+    #            DEPTH BASED APPROACH
+    # ---------------------------------------------
 
-    # Only keep the largest label
-    clean_mask_np = (labels == largest_label).astype(np.uint8)
+    # Note: OpenCV has y = 0 at the top, increase as you go down
+    bottom_edges = stats[1:, cv2.CC_STAT_TOP] + stats[1:, cv2.CC_STAT_HEIGHT]
+    lowest_label = 1 + np.argmax(bottom_edges)
+
+    clean_mask_np = (labels == lowest_label).astype(np.uint8)
     clean_mask_tensor = torch.from_numpy(clean_mask_np).to(mask_tensor.device)
 
-    x_min = stats[largest_label, cv2.CC_STAT_LEFT]
-    y_min = stats[largest_label, cv2.CC_STAT_TOP]
-    width = stats[largest_label, cv2.CC_STAT_WIDTH]
-    height = stats[largest_label, cv2.CC_STAT_HEIGHT]
+    x_min = stats[lowest_label, cv2.CC_STAT_LEFT]
+    y_min = stats[lowest_label, cv2.CC_STAT_TOP]
+    width = stats[lowest_label, cv2.CC_STAT_WIDTH]
+    height = stats[lowest_label, cv2.CC_STAT_HEIGHT]
+
+    # ---------------------------------------------
+    #            AREA BASED APPROACH
+    # ---------------------------------------------
+    # # Isolate pixle counts for each detected label
+    # areas = stats[1:, cv2.CC_STAT_AREA]
+    # largest_label = 1 + np.argmax(areas)
+
+    # # Only keep the largest label
+    # clean_mask_np = (labels == largest_label).astype(np.uint8)
+    # clean_mask_tensor = torch.from_numpy(clean_mask_np).to(mask_tensor.device)
+
+    # x_min = stats[largest_label, cv2.CC_STAT_LEFT]
+    # y_min = stats[largest_label, cv2.CC_STAT_TOP]
+    # width = stats[largest_label, cv2.CC_STAT_WIDTH]
+    # height = stats[largest_label, cv2.CC_STAT_HEIGHT]
 
     # Draw bounding box
     clean_box = torch.tensor([x_min, y_min, x_min + width, y_min + height], device=mask_tensor.device)
