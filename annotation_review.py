@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw
 from utils import (
     draw_JSON_kpts,
     export_to_yolo, 
+    load_predictions,
 )
 
 def launch_qa(json_path, image_dir, server_port):
@@ -13,8 +14,7 @@ def launch_qa(json_path, image_dir, server_port):
     print(f"Reading JSON from {json_path}")
     print(f"Reading images from {image_dir}")
 
-    with open(json_path, "r") as f:
-        raw_preds = json.load(f)
+    raw_preds = load_predictions(json_path)
 
     img_fn = list(raw_preds.keys())
 
