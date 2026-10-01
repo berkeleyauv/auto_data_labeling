@@ -119,4 +119,4 @@ def process_frame(image, processor, model, prompts, device):
         return get_labeled_corners_area(combined_masks, image.width)
     else:
         print("No instances found for any of the provided prompts.")
-        return None
+        return None, None
