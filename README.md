@@ -1,6 +1,6 @@
 # auto_data_labeling
 
-Automated segmentation and bounding box labeling pipeline using SAM3. This  automatically generates normalized YOLO-pose keypoint data for underwater gate detection.
+Automated segmentation and bounding box labeling pipeline using SAM3. This automatically generates normalized YOLO-pose keypoint data for underwater gate detection. The same reviewed corners can also be exported as plain YOLO-detect labels (class = gate orientation) for the intro perception project.
 
 ## Prerequisites
 1. **Compute Environment:** 
@@ -55,10 +55,12 @@ data/your_dataset_name/
 ├── raw_imgs/         # Original input frames (.jpg, .jpeg, .png)
 ├── predictions/      # Raw model outputs (raw_predictions.json)
 └── labels/           # Final exported annotations (.txt files)
+└── intro_detect/     # Intro-project export: images + labels side by side + manifest.csv (only with --format detect/both)
 ```
 
 **2. Class IDs**
-* `0`: `gate`
+* YOLO-pose export (`labels/`): `0`: `gate`
+* Intro-project export (`intro_detect/`): `0`: `left` (the gate's right side appears closer), `1`: `head_on`, `2`: `right` (the gate's left side appears closer)
 
 **3. Keypoint Ordering (YOLO-Pose):**
 When reviewing and exporting keypoints, adhere to the 4-corner index convention:
@@ -121,10 +123,34 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 ```
 - `--image_dir` is where the raw images are for rendering
 - `--json_path` is where the generated predictions are
+- `--format {pose,detect,both}` picks which labels are written (default `pose`, which is the original behavior). Use `both` to produce the YOLO-pose labels and the intro-project dataset from the same review.
+- `--head_on_ratio`, `--clear_ratio` set the orientation bands for the intro export (see below)
+- `--skip_truncated` makes the pose export skip single-post gates (by default they are kept, with the missing corners marked `v=0`)
+- `--link_images` symlinks images into `intro_detect/` instead of copying them
+- `--detect_dir` changes where the intro dataset is written
 
 **2.** Review the annotations:
 - Click the **public gradio.live** link generated in your terminal to open the UI in your web browser.
 - Review the predicted corners (cyan dots) on the underwater gate frame.
-- If a corner is incorrect, select the corresponding radio button (e.g., TL for Top-Left) and click on the image to manually move the point.
-- Click Accept & Export to save the frame and move to the next image.
+- If a corner is incorrect, select the corresponding radio button (e.g., TL for Top-Left) and click on the image to manually move the point. The same works for an image where nothing was found: click all four corners.
+- The line under the image shows the orientation class the current corners would export as, with the edge ratio. It updates as you move corners.
+- Click Accept & Export to save the frame and move to the next image. An image with no corners writes nothing.
+- Click **No Gate** only when you have confirmed the image contains no gate. It writes an empty label (a negative example). Never use Accept for this.
 - When finished, a completion screen will appear.
+
+## Intro Project Export (YOLO-detect)
+ 
+The intro perception project trains and scores a plain YOLO detect model whose **class is the gate's orientation**. `--format detect` (or `both`) derives that class from the same four corners as the pose labels, so the corners stay the single source of truth.
+ 
+**How the class is chosen:** take the lengths of the left edge (`TL`-`BL`) and right edge (`TR`-`BR`) and compute `ratio = right / left`. The closer post looks taller.
+- `ratio` within `[1/head_on_ratio, head_on_ratio]` -> `head_on` (class 1)
+- `ratio >= clear_ratio` -> `left` (class 0, right post closer)
+- `ratio <= 1/clear_ratio` -> `right` (class 2, left post closer)
+- anything in between is **ambiguous and skipped**, as the intro project's guide says to do
+**What is exported:** only images with all four corners visible and a clear orientation. Gates with a missing post or corner, and ambiguous ones, are skipped and nothing is written for them. Skipped images must NOT be handed over as empty "no gate" labels, because a gate is visible in them.
+ 
+**Output:** `intro_detect/` is a flat folder of `<name>.<ext>` + `<name>.txt` (`class cx cy w h`, normalized) plus `manifest.csv`, which records for every reviewed image: status (`exported` / `skipped` / `no_gate`), the reason, class, ratio, both edge lengths in pixels, and the thresholds used. Sort it by `ratio` to inspect the images near the band edges. Re-reviewing an image replaces its earlier export, so labels never go stale.
+ 
+**Calibrate the thresholds before trusting them.** The defaults (`1.06` / `1.25`) are placeholders. The same ratio means a different viewing angle at different distances, and lens distortion can make one post look larger. To choose values: hand-label about 100 images as left / head-on / right / unsure, look at how those labels line up against the manifest ratios, and set the bands where your own judgment switches. Review the held-out validation and test images fully rather than trusting the computed class.
+ 
+**Handing the data to the intro project:** copy the contents of `intro_detect/` into the intro project's `data/raw/` and run its `intro-perception-data split`. The folder is already in the layout that command expects.
