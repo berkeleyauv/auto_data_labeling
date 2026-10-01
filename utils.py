@@ -1,4 +1,5 @@
 import torch
+import json
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 from transformers import Sam3Model, Sam3Processor
@@ -61,6 +62,41 @@ def keep_largest_component(mask_tensor, original_box):
     # Mild morpohological opening to make the reflection/post distinction clearer
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
     mask_np = cv2.morphologyEx(mask_np, cv2.MORPH_OPEN, kernel)    
+
+    # ---------------------------------------
+    #       Try to isolate the waterline
+    # ---------------------------------------
+    # y_coords, _ = np.where(mask_np > 0)
+    # if len(y_coords) > 0:
+    #     y_min, y_max = np.min(y_coords), np.max(y_coords)
+        
+    #     row_centers = []
+    #     valid_ys = []
+        
+    #     # Calculate the horizontal center point of the mask for each row
+    #     for y in range(y_min, y_max + 1):
+    #         row_xs = np.where(mask_np[y, :] > 0)[0]
+    #         if len(row_xs) > 0:
+    #             # Use the midpoint between the leftmost and rightmost pixel of the post
+    #             center_x = (np.min(row_xs) + np.max(row_xs)) / 2.0
+    #             row_centers.append(center_x)
+    #             valid_ys.append(y)
+
+    #     # Look for sudden horizontal shifts between adjacent rows
+    #     if len(row_centers) > 1:
+    #         # np.diff gets the pixel distance the center shifted from one row to the next
+    #         shifts = np.abs(np.diff(row_centers))
+            
+    #         # If the center suddenly shifts by more than 5 pixels, we found the waterline
+    #         kink_indices = np.where(shifts > 1)[0]
+            
+    #         if len(kink_indices) > 0:
+    #             # Take the highest Y coordinate where a kink occurs
+    #             kink_y_idx = kink_indices[0] + 1
+    #             waterline_y = valid_ys[kink_y_idx]
+                
+    #             # Zero out everything above the waterline to permanently sever the reflection
+    #             mask_np[:waterline_y, :] = 0
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_np)
 
@@ -233,6 +269,18 @@ def get_labeled_corners_area(combined_masks, image_width):
 # ---------------------------------------
 #               FRONTEND
 # ---------------------------------------
+
+def load_predictions(json_path):
+    """
+    Load raw_predictions.json for review:
+
+    Treat null readings as empty predictions in case of faulty
+    null detections => let the reviewer draw the kpts
+    """
+    with open(json_path, "r") as f:
+        raw = json.load(f)
+    return {filename: (kpts if isinstance(kpts, dict) else {}) for filename, kpts in raw.items()}
+
 
 def draw_JSON_kpts(img_path, kpts: dict):
     img = Image.open(img_path).convert("RGB")
