@@ -115,8 +115,7 @@ def process_frame(image, processor, model, prompts, device):
         print(f"Scores: {combined_scores.tolist()}")
         print("Keypoints stored sucessfully")
 
-        # return get_labeled_corners(combined_boxes, image.width)
-        return get_labeled_corners_area(combined_masks, image.width)
+        return get_labeled_corners_area(combined_masks, image.width), combined_masks
     else:
         print("No instances found for any of the provided prompts.")
-        return None
+        return None, None
