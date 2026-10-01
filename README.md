@@ -53,7 +53,7 @@ All datasets live under `./data/` and should maintain this 3-subfolder directory
 ```text
 data/your_dataset_name/
 ├── raw_imgs/         # Original input frames (.jpg, .jpeg, .png)
-├── predictions/      # Raw model outputs (raw_predictions.json)
+├── predictions/       # Raw model outputs (raw_predictions.json; plus visualizations/ and failed_images.json when produced)
 └── labels/           # Final exported annotations (.txt files)
 └── intro_detect/     # Intro-project export: images + labels side by side + manifest.csv (only with --format detect/both)
 ```
@@ -99,6 +99,18 @@ sbatch submit_inference.sh --input_dir ./data/your_dataset_name/raw_imgs --outpu
 ```
 - `--input_dir` is where to pull the images from
 - `--output_dir` is where to save the raw_predictions.json file to
+- `--visualize` (optional) also saves a mask + corner overlay for each image to `<output_dir>/visualizations/`. Useful for debugging a small run; leave it off for a full run since it adds time and disk.
+- `--device` (optional) overrides the device (e.g. `cuda:0`, `cpu`). By default it picks CUDA, then MPS, then CPU.
+- `--resume` and `--save_every` are covered below.
+
+The job's time limit is set in `submit_inference.sh` (`#SBATCH --time`, currently 24 hours).
+
+**Checkpointing and resuming:** progress is saved to `raw_predictions.json` every 25 images (change with `--save_every N`). If a job crashes, hits the time limit, or you cancel it with `scancel <jobid>`, rerun the same command with `--resume` and the same `--output_dir`. It skips images already done and continues from there.
+```bash
+sbatch submit_inference.sh --input_dir ./data/your_dataset_name/raw_imgs --output_dir ./data/your_dataset_name/predictions --resume
+```
+- An image where nothing was found is saved as `null`, so it still shows up in the review tool and you can add the corners by hand.
+- If an image errors (corrupt file, out of memory), the run continues, and the image is listed in `<output_dir>/failed_images.json`. It is not saved to `raw_predictions.json` until a `--resume` run succeeds on it, so it won't appear in review until then.
 
 To see live outputs and track inference progress:
 ```bash
@@ -128,6 +140,7 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 - `--skip_truncated` makes the pose export skip single-post gates (by default they are kept, with the missing corners marked `v=0`)
 - `--link_images` symlinks images into `intro_detect/` instead of copying them
 - `--detect_dir` changes where the intro dataset is written
+- `--port` sets the port for the review UI (default 7860)
 
 **2.** Review the annotations:
 - Click the **public gradio.live** link generated in your terminal to open the UI in your web browser.
