@@ -2,7 +2,7 @@
 #SBATCH --job-name=SAM3_inference
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --time=01:00:00
+#SBATCH --time=24:00:00
 
 # Force job to run in folder called from
 cd $SLURM_SUBMIT_DIR
