@@ -6,11 +6,16 @@ from transformers import Sam3Model, Sam3Processor
 from pathlib import Path
 import time
 from annotate_frame import process_frame
+from utils import overlay_masks
 
-def process_dataset(input_dir, output_dir, device_str):
+def process_dataset(input_dir, output_dir, device_str, visualize=False):
 
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / "raw_predictions.json"
+
+    vis_dir = output_dir / "visualizations"
+    if visualize:
+        vis_dir.mkdir(parents=True, exist_ok=True)
 
     # Filter out non-valid image formats
     valid_extensions = {".png", ".jpg", ".jpeg"}
@@ -50,9 +55,20 @@ def process_dataset(input_dir, output_dir, device_str):
 
         image = Image.open(path).convert("RGB")
 
-        keypoints = process_frame(image, processor, model, prompts, device)
+        keypoints, raw_masks = process_frame(image, processor, model, prompts, device)
 
         preds_dct[path.name] = keypoints
+
+        # Draw pts and masks if visualization requested
+        if visualize and raw_masks is not None:
+            overlay = overlay_masks(image, raw_masks).convert("RGB")
+            draw = ImageDraw.Draw(overlay)
+            for label, coords in (keypoints or {}).items():
+                if coords is not None:
+                    x, y = coords
+                    draw.ellipse([x - 12, y - 12, x + 12, y + 12], fill="cyan", outline="black", width=2)
+                    draw.text((x + 16, y - 10), label, fill="yellow")
+            overlay.save(vis_dir / f"{path.stem}.jpg")
 
         print(f"--- Done with image {idx} ---")
 
@@ -72,6 +88,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_dir", type=str, default="./data/raw_images", help="Path to raw images")
     parser.add_argument("--output_dir", type=str, default="./data/predictions", help="Path to saved prediction JSON")
     parser.add_argument("--device", type=str, default="", help="Override torch device (eg. cuda:0, cpu)")
+    parser.add_argument("--visualize", action="store_true", help="Also save mask/corner overlays to <output_dir>/visualizations")
 
     args= parser.parse_args()
-    process_dataset(Path(args.input_dir), Path(args.output_dir), args.device)
+    process_dataset(Path(args.input_dir), Path(args.output_dir), args.device, args.visualize)
