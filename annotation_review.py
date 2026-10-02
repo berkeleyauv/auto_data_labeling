@@ -10,6 +10,7 @@ from utils import (
     export_to_intro_detect,
     export_to_yolo,
     load_predictions,
+    reviewed_stems,
 )
 
 def launch_qa(json_path,
@@ -19,6 +20,7 @@ def launch_qa(json_path,
     detect_dir=None,
     skip_truncated=False,
     images="none",
+    resume=False,
 ):
 
     print(f"Reading JSON from {json_path}")
@@ -31,6 +33,18 @@ def launch_qa(json_path,
 
     labels_dir = image_dir.parent / "labels"
     detect_dir = Path(detect_dir) if detect_dir else image_dir.parent / "intro_detect"
+    
+    already_reviewed = 0
+    if resume:
+        done = reviewed_stems(labels_dir, detect_dir)
+        remaining = [fn for fn in img_fn if Path(fn).stem not in done]
+        already_reviewed = len(img_fn) - len(remaining)
+        img_fn = remaining
+        print(f"Resuming: {already_reviewed} images already reviewed, {len(img_fn)} left")
+    do_pose = export_format in ("pose", "both")
+    do_detect = export_format in ("detect", "both")
+
+    
     do_pose = export_format in ("pose", "both")
     do_detect = export_format in ("detect", "both")
 
@@ -184,8 +198,9 @@ if __name__ == "__main__":
     parser.add_argument("--json_path", type=str, default="./Test_JSON/raw_predictions.json")
     parser.add_argument("--image_dir", type=str, default="./Test_Images")
     parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument("--resume", action="store_true", help="skip images already reviewed in an earlier session (they have a label or a manifest row)")
 
-     # Which labels to write: YOLO-pose (labels/), the intro project's YOLO-detect set (intro_detect/), or both
+    # Which labels to write: YOLO-pose (labels/), the intro project's YOLO-detect set (intro_detect/), or both
     parser.add_argument("--format", type=str, choices=["pose", "detect", "both"], default="pose")
     parser.add_argument("--detect_dir", type=str, default=None,
                         help="where the detect labels + manifest.csv go (default: <dataset>/intro_detect)")
@@ -203,4 +218,5 @@ if __name__ == "__main__":
         detect_dir=args.detect_dir,
         skip_truncated=args.skip_truncated,
         images=args.images,
+        resume=args.resume,
     )
