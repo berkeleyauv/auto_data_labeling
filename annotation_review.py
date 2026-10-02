@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 from PIL import Image, ImageDraw
 from utils import (
-    DEFAULT_CLEAR_RATIO,
-    DEFAULT_HEAD_ON_RATIO,
-    describe_orientation,
+    describe_gate,
     draw_JSON_kpts,
     export_no_gate_pose,
     export_to_intro_detect,
@@ -19,10 +17,8 @@ def launch_qa(json_path,
     server_port,
     export_format="pose",
     detect_dir=None,
-    head_on_ratio=DEFAULT_HEAD_ON_RATIO,
-    clear_ratio=DEFAULT_CLEAR_RATIO,
     skip_truncated=False,
-    link_images=False,
+    images="none",
 ):
 
     print(f"Reading JSON from {json_path}")
@@ -52,7 +48,7 @@ def launch_qa(json_path,
 
         # Preivew assigned orientation class
         with gr.Row():
-            orientation_info = gr.Markdown()
+            gate_info = gr.Markdown()
 
         # Corner selections for adjustment
         with gr.Row():
@@ -85,7 +81,7 @@ def launch_qa(json_path,
         def status_text(index):
             if index >= len(img_fn):
                 return last_msg[0] or "All images reviewed."
-            preview = describe_orientation(raw_preds[img_fn[index]], head_on_ratio, clear_ratio)
+            preview = describe_gate(raw_preds[img_fn[index]], skip_truncated)
             return f"{last_msg[0]}\n\n{preview}" if last_msg[0] else preview
 
         def render_all(index):
@@ -124,14 +120,14 @@ def launch_qa(json_path,
             if do_detect:
                 row = export_to_intro_detect(
                     filename, points, img_path, img_width, img_height, detect_dir,
-                    head_on_ratio, clear_ratio, no_gate=no_gate, link_images=link_images,
+                    no_gate=no_gate, allow_truncated=not skip_truncated, images=images,
                 )
                 if row["status"] == "exported":
-                    msg = f"Last: {filename} -> {row['class_name']} (class {row['class_id']}, ratio {row['ratio']})"
+                    msg = f"Last: {filename} -> gate label written" + (" (truncated)" if row["truncated"] else "")
                 elif row["status"] == "no_gate":
                     msg = f"Last: {filename} -> no gate (empty label)"
                 else:
-                    msg = f"Last: {filename} SKIPPED in intro export ({row['reason']})"
+                    msg = f"Last: {filename} SKIPPED in detect export ({row['reason']})"
             last_msg[0] = msg
 
         # Accepting the corner points
@@ -159,24 +155,24 @@ def launch_qa(json_path,
         #            BUTTON CONFIGS
         # ---------------------------------------
 
-        app.load(fn=render_all, inputs=curr_idx, outputs=[img_display, orientation_info])
+        app.load(fn=render_all, inputs=curr_idx, outputs=[img_display, gate_info])
 
         img_display.select(
             fn=update_kp,
             inputs=[curr_idx, corner_selector],
-            outputs=[img_display, orientation_info],
+            outputs=[img_display, gate_info],
         )
 
         btn_accept.click(
             fn=accept_and_next,
             inputs=curr_idx,
-            outputs=[curr_idx, img_display, orientation_info],
+            outputs=[curr_idx, img_display, gate_info],
         )
 
         btn_no_gate.click(
             fn=no_gate_and_next,
             inputs=curr_idx,
-            outputs=[curr_idx, img_display, orientation_info]
+            outputs=[curr_idx, img_display, gate_info]
         )
 
     app.launch(server_name="0.0.0.0", server_port=server_port, share=True)
@@ -192,15 +188,11 @@ if __name__ == "__main__":
      # Which labels to write: YOLO-pose (labels/), the intro project's YOLO-detect set (intro_detect/), or both
     parser.add_argument("--format", type=str, choices=["pose", "detect", "both"], default="pose")
     parser.add_argument("--detect_dir", type=str, default=None,
-                        help="where the intro-project dataset goes (default: <dataset>/intro_detect)")
-    parser.add_argument("--head_on_ratio", type=float, default=DEFAULT_HEAD_ON_RATIO,
-                        help="edge ratios within [1/x, x] are head-on")
-    parser.add_argument("--clear_ratio", type=float, default=DEFAULT_CLEAR_RATIO,
-                        help="edge ratios beyond x (or below 1/x) are clearly left/right; in between is skipped")
+                        help="where the detect labels + manifest.csv go (default: <dataset>/labels_detect)")
     parser.add_argument("--skip_truncated", action="store_true",
-                        help="pose export: skip single-post gates instead of keeping them with v=0 corners")
-    parser.add_argument("--link_images", action="store_true",
-                        help="intro export: symlink images instead of copying them (saves disk)")
+                        help="skip single-post gates in BOTH exports instead of keeping them (box extends to the image edge)")
+    parser.add_argument("--images", type=str, choices=["none", "copy", "link"], default="none",
+                        help="detect export: also copy/symlink each image next to its label (the current intro-project `split` expects that)")
  
     args = parser.parse_args()
     launch_qa(
@@ -209,8 +201,6 @@ if __name__ == "__main__":
         args.port,
         export_format=args.format,
         detect_dir=args.detect_dir,
-        head_on_ratio=args.head_on_ratio,
-        clear_ratio=args.clear_ratio,
         skip_truncated=args.skip_truncated,
-        link_images=args.link_images,
+        images=args.images,
     )
