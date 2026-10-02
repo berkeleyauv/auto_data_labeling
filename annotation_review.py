@@ -72,6 +72,7 @@ def launch_qa(json_path,
                 label="Corner to Adjust", 
                 interactive=True
             )
+            btn_remove = gr.Button("Remove Selected Corner")
 
         # Accept button
         with gr.Row():
@@ -112,6 +113,15 @@ def launch_qa(json_path,
 
             raw_preds[filename][corner] = [x, y]
 
+            return render_all(index)
+
+        # Delete selected corner
+        def remove_kp(index, corner):
+            if index >= len(img_fn):
+                return render_all(index)
+ 
+            raw_preds[img_fn[index]][corner] = None
+ 
             return render_all(index)
 
         # Write whichever exports were requested for the current image
@@ -176,6 +186,13 @@ def launch_qa(json_path,
             inputs=[curr_idx, corner_selector],
             outputs=[img_display, gate_info],
         )
+
+        btn_remove.click(
+            fn=remove_kp,
+            inputs=[curr_idx, corner_selector],
+            outputs=[img_display, gate_info],
+        )
+
 
         btn_accept.click(
             fn=accept_and_next,
