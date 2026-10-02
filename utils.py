@@ -4,7 +4,6 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import shutil
-import math
 import matplotlib
 import csv
 from pathlib import Path
@@ -102,9 +101,17 @@ def keep_largest_component(mask_tensor, original_box):
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_np)
 
-    # Ignore if there is no separation
+    # Make sure that tensors are always returned as opposed to numpy arrays
     if num_labels <= 1:
-        return mask_np, original_box
+        original_np = (mask_tensor.cpu().numpy() > 0).astype(np.uint8)
+        original_mask_tensor = torch.from_numpy(original_np).to(mask_tensor.device)
+ 
+        ys, xs = np.nonzero(original_np)
+        if len(xs) == 0:
+            return original_mask_tensor, original_box
+ 
+        fallback_box = torch.tensor([xs.min(), ys.min(), xs.max() + 1, ys.max() + 1], device=mask_tensor.device)
+        return original_mask_tensor, fallback_box
 
     # ---------------------------------------------
     #            DEPTH BASED APPROACH
@@ -296,6 +303,23 @@ def draw_JSON_kpts(img_path, kpts: dict):
             draw.text((x + r + 5, y - 10), label, fill="yellow")
     return img
 
+def missing_sides(points):
+    """Sides of the gate where BOTH corners are missing"""
+    def missing(a, b):
+        return points.get(a) is None and points.get(b) is None
+ 
+    sides = []
+    if missing("TL", "BL"):
+        sides.append("left")
+    if missing("TR", "BR"):
+        sides.append("right")
+    if missing("TL", "TR"):
+        sides.append("top")
+    if missing("BL", "BR"):
+        sides.append("bottom")
+    return sides
+
+
 def compute_gate_box(points, img_width, img_height, allow_truncated=False):
     """
     Return bounding box (x_min, y_min, x_max, y_max) in pixels for the YOLO label, or None.
@@ -306,7 +330,7 @@ def compute_gate_box(points, img_width, img_height, allow_truncated=False):
                                 the missing corners just get visibility 0)
         allow_truncated=False -> returns None (a whole-gate box can't be formed)
 
-    JUST FOR INTRO PROJECT: Return None when there are no visible corners or if only one
+    Returns None when there are no visible corners or the box would have no area.
     post is visible.
     """
 
@@ -321,22 +345,19 @@ def compute_gate_box(points, img_width, img_height, allow_truncated=False):
     x_min, x_max = min(xs), max(xs)
     y_min, y_max = min(ys), max(ys)
 
-    def both_missing(a, b):
-        return a not in visible and b not in visible
+    sides = missing_sides(points)
 
-    # Return None for single post gates
-    if both_missing("TL", "BL") or both_missing("TR", "BR"):
+    if "left" in sides or "right" in sides:
         if not allow_truncated:
             return None
-        if both_missing("TL", "BL"):
+        if "left" in sides:
             x_min = 0
-        if both_missing("TR", "BR"):
+        if "right" in sides:
             x_max = img_width
 
-    # Edge cases
-    if both_missing("TL", "TR"):
+    if "top" in sides:
         y_min = 0
-    if both_missing("BL", "BR"):
+    if "bottom" in sides:
         y_max = img_height
 
     # Keep the box inside the image
@@ -416,88 +437,37 @@ def export_no_gate_pose(filename, labels_dir):
  
 CORNERS = ("TL", "TR", "BL", "BR")
  
-# Class ids used by the intro project:
-#   0 = left     the gate's right side appears closer (right post taller)
-#   1 = head_on  both posts look about the same height
-#   2 = right    the gate's left side appears closer (left post taller)
-INTRO_CLASSES = {"left": 0, "head_on": 1, "right": 2}
- 
-# PLACEHOLDERS: calibrate on a hand-labeled sample before trusting them.
-# ratio = right edge length / left edge length.
-#   spread <= HEAD_ON  -> head_on
-#   spread >= CLEAR    -> left / right
-#   in between         -> ambiguous (skipped, as the intro GUIDE says to do)
-# where spread = max(ratio, 1/ratio), so left and right are treated symmetrically.
-DEFAULT_HEAD_ON_RATIO = 1.06
-DEFAULT_CLEAR_RATIO = 1.25
+GATE_CLASS_ID = 0
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
  
 MANIFEST_FIELDS = [
     "filename", "status", "reason", "class_name", "class_id",
     "ratio", "left_edge_px", "right_edge_px", "head_on_ratio", "clear_ratio",
 ]
  
-INTRO_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
+def describe_gate(points, skip_truncated=False):
+    """One-line summary of how the current corners will export, for the review UI."""
+    n_corners = sum(1 for corner in CORNERS if points.get(corner) is not None)
  
+    if n_corners == 0:
+        return "Gate: **no corners yet** | click the 4 corners, or use No Gate if the gate is not in this image"
  
-def compute_orientation(points, head_on_ratio=DEFAULT_HEAD_ON_RATIO, clear_ratio=DEFAULT_CLEAR_RATIO):
-    """
-    Orientation class from the four corners, using the lengths of the two vertical edges.
+    sides = missing_sides(points)
  
-    Needs all four corners (each edge needs both of its ends). Edge lengths are
-    Euclidean, so a small camera roll doesn't change them.
+    if not sides:
+        note = "" if n_corners == 4 else " (1 corner missing, the box uses the visible ones)"
+        return f"Gate: **whole gate** | {n_corners}/4 corners{note}"
  
-    Returns a dict: class_name / class_id (None when no class can be assigned),
-    ratio (right edge / left edge), left_edge, right_edge (px), reason (why not).
-    """
-    if not 1.0 <= head_on_ratio < clear_ratio:
-        raise ValueError("thresholds must satisfy 1 <= head_on_ratio < clear_ratio")
+    if "left" in sides or "right" in sides:
+        gone = "left" if "left" in sides else "right"
+        present = "right" if gone == "left" else "left"
+        if skip_truncated:
+            return f"Gate: **single post** (only the {present} post) | will be SKIPPED (--skip_truncated)"
+        return f"Gate: **single post** (only the {present} post) | box will extend to the {gone} image edge"
  
-    result = {"class_name": None, "class_id": None, "ratio": None,
-              "left_edge": None, "right_edge": None, "reason": ""}
- 
-    missing = [c for c in CORNERS if points.get(c) is None]
-    if missing:
-        result["reason"] = "missing corner(s): " + ", ".join(missing)
-        return result
- 
-    left_edge = math.dist(points["TL"], points["BL"])
-    right_edge = math.dist(points["TR"], points["BR"])
-    result["left_edge"], result["right_edge"] = left_edge, right_edge
- 
-    if left_edge < 1 or right_edge < 1:
-        result["reason"] = "degenerate post (edge shorter than 1 px)"
-        return result
- 
-    ratio = right_edge / left_edge
-    result["ratio"] = ratio
-    spread = max(ratio, 1 / ratio)
- 
-    if spread <= head_on_ratio:
-        name = "head_on"
-    elif spread >= clear_ratio:
-        name = "left" if ratio > 1 else "right"
-    else:
-        result["reason"] = (f"ambiguous: ratio {ratio:.3f} falls between the head-on "
-                            f"and clear bands ({head_on_ratio}/{clear_ratio})")
-        return result
- 
-    result["class_name"] = name
-    result["class_id"] = INTRO_CLASSES[name]
-    return result
- 
- 
-def describe_orientation(points, head_on_ratio=DEFAULT_HEAD_ON_RATIO, clear_ratio=DEFAULT_CLEAR_RATIO):
-    """One-line summary of compute_orientation for the review UI."""
-    o = compute_orientation(points, head_on_ratio, clear_ratio)
- 
-    if o["class_name"] is not None:
-        return (f"Orientation: **{o['class_name']}** (class {o['class_id']}) | "
-                f"ratio {o['ratio']:.3f} (right edge {o['right_edge']:.0f}px / left edge {o['left_edge']:.0f}px)")
-    if o["ratio"] is not None:
-        return (f"Orientation: **ambiguous** | ratio {o['ratio']:.3f} is between {head_on_ratio} and "
-                f"{clear_ratio}, so this image is skipped in the intro export")
-    return f"Orientation: n/a | {o['reason']}"
- 
+    edges = " and ".join(sides)
+    return f"Gate: both posts visible, {edges} corners missing | box will extend to the {edges} image edge" 
  
 def update_manifest(manifest_path, row):
     """Insert or replace this image's row, so re-reviewing an image never duplicates it."""
@@ -519,12 +489,11 @@ def update_manifest(manifest_path, row):
 def _remove_exported(out_dir, stem):
     """Delete an earlier export of this image so a re-review can't leave a stale label."""
     for path in out_dir.iterdir():
-        if path.stem == stem and (path.suffix.lower() in INTRO_IMAGE_SUFFIXES or path.suffix == ".txt"):
+        if path.stem == stem and (path.suffix.lower() in IMAGE_SUFFIXES or path.suffix == ".txt"):
             path.unlink()
  
- 
-def _place_image(src, dst, link=False):
-    if link:
+def _place_image(src, dst, mode):
+    if mode == "link":
         try:
             dst.symlink_to(Path(src).resolve())
             return
@@ -532,17 +501,20 @@ def _place_image(src, dst, link=False):
             pass  # e.g. symlinks not permitted: fall back to a copy
     shutil.copy2(src, dst)
  
- 
 def export_to_intro_detect(filename, points, img_path, img_width, img_height, out_dir,
-                           head_on_ratio=DEFAULT_HEAD_ON_RATIO, clear_ratio=DEFAULT_CLEAR_RATIO,
-                           no_gate=False, link_images=False):
+                           no_gate=False, allow_truncated=True, images="none"):
     """
-    Write one image + its YOLO-detect label for the intro project, and log the decision.
+    Write one YOLO-detect label (single class, 0 = gate) and log the decision in manifest.csv.
  
-    Exported only when all four corners are visible and the orientation is clear.
-    Everything else is skipped (nothing written) and the reason goes in manifest.csv.
-    no_gate=True writes the image with an EMPTY label (a confirmed negative); this is
-    only ever used when the reviewer explicitly says there is no gate.
+    The box is the bounding box of the visible corners. A gate with one post missing is
+    kept by default, with the box extended to the image edge on the side where it runs
+    off-frame (allow_truncated=False skips those instead). Anything with no usable box
+    is skipped: nothing is written and the reason goes in the manifest.
+ 
+    no_gate=True writes an EMPTY label, meaning "no gate in this image" (a confirmed
+    negative). Only use it when the reviewer explicitly says so.
+ 
+    images: "none" (labels only), or "copy" / "link" to also place the image next to its label.
  
     Returns the manifest row (a dict) so the caller can show what happened.
     """
@@ -550,9 +522,11 @@ def export_to_intro_detect(filename, points, img_path, img_width, img_height, ou
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(filename).stem
  
-    row = {"filename": filename, "status": "", "reason": "", "class_name": "", "class_id": "",
-           "ratio": "", "left_edge_px": "", "right_edge_px": "",
-           "head_on_ratio": head_on_ratio, "clear_ratio": clear_ratio}
+    n_corners = sum(1 for corner in CORNERS if points.get(corner) is not None)
+    sides = missing_sides(points)
+ 
+    row = {"filename": filename, "status": "", "reason": "", "truncated": "", "n_corners": n_corners,
+           "box_cx": "", "box_cy": "", "box_w": "", "box_h": ""}
  
     # A re-review replaces the earlier decision completely
     _remove_exported(out_dir, stem)
@@ -561,29 +535,35 @@ def export_to_intro_detect(filename, points, img_path, img_width, img_height, ou
         label_text = ""
         row.update(status="no_gate", reason="reviewer marked no gate")
     else:
-        o = compute_orientation(points, head_on_ratio, clear_ratio)
-        if o["ratio"] is not None:
-            row.update(ratio=f"{o['ratio']:.4f}", left_edge_px=f"{o['left_edge']:.1f}",
-                       right_edge_px=f"{o['right_edge']:.1f}")
+        box = compute_gate_box(points, img_width, img_height, allow_truncated=allow_truncated)
  
-        box = None
-        if o["class_id"] is not None:
-            box = compute_gate_box(points, img_width, img_height, allow_truncated=False)
- 
-        if o["class_id"] is None or box is None:
-            row.update(status="skipped", reason=o["reason"] or "corners enclose no area")
+        if box is None:
+            if n_corners == 0:
+                reason = "no corners (use No Gate if the image has no gate)"
+            elif ("left" in sides or "right" in sides) and not allow_truncated:
+                reason = "single post (truncated gates are skipped)"
+            else:
+                reason = "corners enclose no area"
+            row.update(status="skipped", reason=reason, truncated=bool(sides) if n_corners else "")
             update_manifest(out_dir / "manifest.csv", row)
-            print(f"Skipped (intro detect) {filename}: {row['reason']}")
+            print(f"Skipped (detect) {filename}: {reason}")
             return row
  
         x_min, y_min, x_max, y_max = box
-        label_text = (f"{o['class_id']} {((x_min + x_max) / 2) / img_width:.6f} "
-                      f"{((y_min + y_max) / 2) / img_height:.6f} "
-                      f"{(x_max - x_min) / img_width:.6f} {(y_max - y_min) / img_height:.6f}\n")
-        row.update(status="exported", class_name=o["class_name"], class_id=o["class_id"])
+        cx = ((x_min + x_max) / 2) / img_width
+        cy = ((y_min + y_max) / 2) / img_height
+        bw = (x_max - x_min) / img_width
+        bh = (y_max - y_min) / img_height
+ 
+        label_text = f"{GATE_CLASS_ID} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n"
+        row.update(status="exported", truncated=bool(sides),
+                   box_cx=f"{cx:.6f}", box_cy=f"{cy:.6f}", box_w=f"{bw:.6f}", box_h=f"{bh:.6f}")
  
     (out_dir / f"{stem}.txt").write_text(label_text)
-    _place_image(img_path, out_dir / Path(filename).name, link=link_images)
+ 
+    if images != "none":
+        _place_image(img_path, out_dir / Path(filename).name, images)
+ 
     update_manifest(out_dir / "manifest.csv", row)
-    print(f"Saved (intro detect): {out_dir / (stem + '.txt')}  [{row['status']}]")
+    print(f"Saved (detect): {out_dir / (stem + '.txt')}  [{row['status']}]")
     return row
