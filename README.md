@@ -55,11 +55,11 @@ data/your_dataset_name/
 ├── raw_imgs/         # Original input frames (.jpg, .jpeg, .png)
 ├── predictions/       # Raw model outputs (raw_predictions.json; plus visualizations/ and failed_images.json when produced)
 └── labels/           # Final exported annotations (.txt files)
-└── intro_detect/     # Intro-project export: images + labels side by side + manifest.csv (only with --format detect/both)
+└── intro_detect/     # Single-class YOLO-detect labels + manifest.csv (only with --format detect/both)
 ```
 
 **2. Class IDs**
-* `0`: `gate` is the only class, in both the YOLO-pose labels (`labels/`) and the YOLO-detect labels (`labels_detect/`). There is no orientation class.
+* `0`: `gate` is the only class, in both the YOLO-pose labels (`labels/`) and the YOLO-detect labels (`intro_detect/`). There is no orientation class.
 
 **3. Keypoint Ordering (YOLO-Pose):**
 When reviewing and exporting keypoints, adhere to the 4-corner index convention:
@@ -136,18 +136,23 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 - `--json_path` is where the generated predictions are
 - `--format {pose,detect,both}` picks which labels are written (default `pose`, which is the original behavior). Use `both` to produce the YOLO-pose labels and the single-class detect labels from the same review.
 - `--skip_truncated` skips single-post gates in both exports instead of keeping them (by default they are kept: pose marks the missing corners `v=0`, detect extends the box to the image edge)
-- `--detect_dir` changes where the detect labels and `manifest.csv` are written (default `<dataset>/labels_detect`)
+- `--detect_dir` changes where the detect labels and `manifest.csv` are written (default `<dataset>/intro_detect`)
 - `--images {none,copy,link}` controls whether the detect export also places each image next to its label (default `none`, labels only)
 - `--port` sets the port for the review UI (default 7860)
+- `--resume` skips images that an earlier session already reviewed (they have a label or a manifest row), so you can stop at any time and pick up where you left off
 
 **2.** Review the annotations:
 - Click the **public gradio.live** link generated in your terminal to open the UI in your web browser.
 - Review the predicted corners (cyan dots) on the underwater gate frame.
-- If a corner is incorrect, select the corresponding radio button (e.g., TL for Top-Left) and click on the image to manually move the point. The same works for an image where nothing was found: click all four corners.
+- If a corner is incorrect, select the corresponding radio button (e.g., TL for Top-Left) and click on the image to manually move the point. If the pipeline marked something that is not a gate corner at all, select it and click **Remove Selected Corner** to delete it. The same works for an image where nothing was found: click all four corners.
 - The line under the image shows the orientation class the current corners would export as, with the edge ratio. It updates as you move corners.
 - Click Accept & Export to save the frame and move to the next image. An image with no corners writes nothing.
 - Click **No Gate** only when you have confirmed the image contains no gate. It writes an empty label (a negative example). Never use Accept for this.
 - When finished, a completion screen will appear.
+
+**Removing corners:** a removed corner is saved as not visible (`v=0` in the pose label). If you remove one corner, the box uses the other three. If you remove both corners of a post, the image becomes a single-post gate (kept with the box extended to the image edge, or skipped with `--skip_truncated`). If the whole detection is wrong and there is no gate in the image, use **No Gate** instead of removing every corner: accepting with no corners writes nothing and the image is recorded as skipped.
+
+**Working in sessions:** every Accept / No Gate is saved immediately, so you can close the tool at any point. The tool does not remember its place on its own: relaunch with `--resume` to continue from the first image you haven't reviewed. Without `--resume` it starts at the first image again, and accepting an image you already reviewed re-exports the *original* prediction over your correction. Images you never reviewed have no label, so the intro project's `split --labels` leaves them out of the dataset.
 
 ## Intro Project Export (YOLO-detect)
  
@@ -161,8 +166,8 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 - Accept & Export on a usable gate: a `<name>.txt` with one box.
 - **No Gate**: an empty `<name>.txt`. In YOLO format an empty label means "no object in this image" (a background image), so use it only when you have confirmed there is no gate.
 - Accept with no usable corners, or a skipped single post: nothing is written and the reason goes in the manifest. Do not hand these over as empty "no gate" labels, because a gate may be visible in them.
-**Output:** `labels_detect/` holds the label files and `manifest.csv`, with one row per reviewed image: `filename`, `status` (`exported` / `skipped` / `no_gate`), `reason`, `truncated`, `n_corners`, and the box (`box_cx`, `box_cy`, `box_w`, `box_h`). Filter on `truncated` to find the cut-off gates, or sort by `box_w` to inspect small or distant ones. Re-reviewing an image replaces its earlier export, so labels never go stale.
+**Output:** `intro_detect/` holds the label files and `manifest.csv`, with one row per reviewed image: `filename`, `status` (`exported` / `skipped` / `no_gate`), `reason`, `truncated`, `n_corners`, and the box (`box_cx`, `box_cy`, `box_w`, `box_h`). Filter on `truncated` to find the cut-off gates, or sort by `box_w` to inspect small or distant ones. Re-reviewing an image replaces its earlier export, so labels never go stale.
  
 **Images:** by default only labels are written (`--images none`). `--images copy` (or `link` to symlink instead of copying) also places each image next to its label, which is the layout the intro project's current `split` expects.
  
-**Handing the data to the intro project:** either use `--images copy` and put the contents of `labels_detect/` into the intro project's `data/raw/`, or point the intro project's `split` at the images and `labels_detect/` separately once it supports a separate labels folder. Warning: the intro project currently still treats class `0` as `gate_left`, so these labels are only meaningful there after it has been moved to a single class.
+**Handing the data to the intro project:** either use `--images copy` and put the contents of `intro_detect/` into the intro project's `data/raw/`, or point the intro project's `split` at the images and `intro_detect/` separately once it supports a separate labels folder. Warning: the intro project currently still treats class `0` as `gate_left`, so these labels are only meaningful there after it has been moved to a single class.
