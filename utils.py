@@ -442,8 +442,8 @@ GATE_CLASS_ID = 0
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
  
 MANIFEST_FIELDS = [
-    "filename", "status", "reason", "class_name", "class_id",
-    "ratio", "left_edge_px", "right_edge_px", "head_on_ratio", "clear_ratio",
+    "filename", "status", "reason", "truncated", "n_corners",
+    "box_cx", "box_cy", "box_w", "box_h",
 ]
  
 def describe_gate(points, skip_truncated=False):
