@@ -188,7 +188,7 @@ if __name__ == "__main__":
      # Which labels to write: YOLO-pose (labels/), the intro project's YOLO-detect set (intro_detect/), or both
     parser.add_argument("--format", type=str, choices=["pose", "detect", "both"], default="pose")
     parser.add_argument("--detect_dir", type=str, default=None,
-                        help="where the detect labels + manifest.csv go (default: <dataset>/labels_detect)")
+                        help="where the detect labels + manifest.csv go (default: <dataset>/intro_detect)")
     parser.add_argument("--skip_truncated", action="store_true",
                         help="skip single-post gates in BOTH exports instead of keeping them (box extends to the image edge)")
     parser.add_argument("--images", type=str, choices=["none", "copy", "link"], default="none",
