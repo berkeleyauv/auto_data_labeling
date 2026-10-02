@@ -484,7 +484,27 @@ def update_manifest(manifest_path, row):
         writer.writeheader()
         for filename in sorted(rows):
             writer.writerow(rows[filename])
+
+def reviewed_stems(labels_dir, detect_dir):
+    """
+    Image names (without extension) that an earlier QA session already dealt with.
  
+    An image counts as reviewed if it has a pose label in labels_dir, or any row in the
+    detect manifest (including skipped ones), so --resume never shows it again and can't
+    overwrite a corrected label with the original prediction.
+    """
+    done = set()
+ 
+    labels_dir, detect_dir = Path(labels_dir), Path(detect_dir)
+    if labels_dir.is_dir():
+        done.update(path.stem for path in labels_dir.glob("*.txt"))
+ 
+    manifest_path = detect_dir / "manifest.csv"
+    if manifest_path.is_file():
+        with open(manifest_path, newline="") as f:
+            done.update(Path(row["filename"]).stem for row in csv.DictReader(f))
+ 
+    return done
  
 def _remove_exported(out_dir, stem):
     """Delete an earlier export of this image so a re-review can't leave a stale label."""
