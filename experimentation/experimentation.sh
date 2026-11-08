@@ -4,6 +4,6 @@
 #SBATCH --gres=gpu:1
 #SBATCH --time=00:30:00
 
-cd $SLURM_SUBMIT_DIR
+cd ~/auto_data_labeling
 source .venv/bin/activate
 python experimentation/experimentation.py "$@"
