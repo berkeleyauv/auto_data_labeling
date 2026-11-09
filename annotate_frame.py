@@ -7,9 +7,15 @@ from utils import (
     get_labeled_corners,
     get_labeled_corners_area,
 )
+from post_selection import (
+    select_posts_area,
+    select_posts_cluster,
+    select_posts_pairwise,
+)
+
+select_posts = select_posts_cluster
 
 confidence_threshold = 0.5
-post_ratio_thresh = 0.5
 
 def process_frame(image, processor, model, prompts, device):
     inference_start = time.time()
@@ -40,46 +46,14 @@ def process_frame(image, processor, model, prompts, device):
             boxes = results["boxes"]
             scores = results["scores"]
             
-            areas = []
             # Convert tensor masks to numpy arrays for OpenCV
             masks_np = masks.cpu().numpy().astype(np.uint8)
-            
-            for m in masks_np:
-                # Scale 0/1 binary mask to 0/255 for cv2
-                m_255 = m * 255
-                contours, _ = cv2.findContours(m_255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                if contours:
-                    # Find the largest contour area within this specific mask
-                    max_area = max([cv2.contourArea(c) for c in contours])
-                    areas.append(max_area)
-                else:
-                    areas.append(0.0)
-                    
-            # Sort indices by area in descending order
-            sorted_indices = np.argsort(areas)[::-1].tolist()
+            valid_indices = select_posts(masks_np, scores.detach().float().cpu().numpy())
 
-            valid_indices = []
-            if len(sorted_indices) > 0:
+            if len(valid_indices) == 0:
+                print("    -> No instance passed post selection for this prompt")
+                continue
 
-                # Always keep the largest area (the primary post)
-                largest_idx = sorted_indices[0]
-                largest_area = areas[largest_idx]
-                
-                if largest_area > 0:
-                    valid_indices.append(largest_idx)
-                
-                # Evaluate the second largest if it exists
-                if len(sorted_indices) > 1:
-                    second_idx = sorted_indices[1]
-                    second_area = areas[second_idx]
-                    
-                    # Check if the second post meets the 0.7 ratio threshold
-                    if (second_area / largest_area) >= post_ratio_thresh:
-                        valid_indices.append(second_idx)
-                    else:
-                        print(f"    -> Discarding second post. Ratio: {(second_area/largest_area):.2f} < {post_ratio_thresh}")
-            
             # Filter the tensors
             filtered_masks = masks[valid_indices]
             filtered_boxes = boxes[valid_indices]
