@@ -2,15 +2,15 @@ import math
 from dataclasses import dataclass, field
 from itertools import combinations
 from types import SimpleNamespace
- 
+
 import numpy as np
- 
+
 # ---- pairwise score terms (order of `pair_weights`) ----
-PAIR_TERMS = ("conf", "len", "level", "par", "size")
-PAIR_WEIGHTS_DEFAULT = (0.30, 0.15, 0.20, 0.15, 0.20)     # normalised to sum 1 at run time
+PAIR_TERMS = ("conf", "len", "level", "par", "size", "height")
+PAIR_WEIGHTS_DEFAULT = (0.20, 0.10, 0.15, 0.10, 0.15, 0.30)     # normalised to sum 1 at run time
 MAX_PAIR_CANDS = 30            # safety cap on n for the n^2 loop
 TOP_PAIRS_LOGGED = 5
- 
+
 DEFAULTS = SimpleNamespace(
     # clustering (fractions of image width unless noted)
     containment=0.5,           # masks overlapping >= this fraction of the smaller one are the same post
@@ -29,11 +29,12 @@ DEFAULTS = SimpleNamespace(
     # area baseline
     area_ratio=0.5,            # second-largest must be at least this fraction of the largest
 )
- 
+
+
 # ---------------------------------------------------------------------------
 # Candidates: one SAM3 instance plus the geometry the selectors need
 # ---------------------------------------------------------------------------
- 
+
 @dataclass
 class Cand:
     uid: str                    # "V3" = the 4th instance for the post prompt; "H0" = crossbar prompt
@@ -55,16 +56,16 @@ class Cand:
     cluster: int = -1
     post_like: bool = True
     idx: int = -1               # index of this instance in the `masks` array it came from
- 
+
     @property
     def w(self):
         return self.x1 - self.x0 + 1
- 
+
     @property
     def h(self):
         return self.y1 - self.y0 + 1
- 
- 
+
+
 def make_cand(uid, kind, score, mask, idx=-1):
     """Build a Cand from a binary mask. Returns None for an empty mask."""
     mask = np.asarray(mask) > 0
@@ -79,7 +80,7 @@ def make_cand(uid, kind, score, mask, idx=-1):
     bot_sel = ys >= y1 - band + 1
     top = (float(xs[top_sel].mean()), float(ys[top_sel].mean()))
     bot = (float(xs[bot_sel].mean()), float(ys[bot_sel].mean()))
- 
+
     # Principal axis of the pixel cloud (sub-sampled so huge masks stay cheap).
     px, py = xs, ys
     if xs.size > 20000:
@@ -95,11 +96,12 @@ def make_cand(uid, kind, score, mask, idx=-1):
         tilt_s = float(np.degrees(np.arctan2(v[0], v[1])))
         tilt = abs(tilt_s)
         elong = float(min(999.0, np.sqrt(max(evals[1], 1e-9) / max(evals[0], 1e-9))))
- 
+
     return Cand(uid=uid, kind=kind, score=float(score), mask=mask, area=int(xs.size),
                 x0=x0, y0=y0, x1=x1, y1=y1, cx=(x0 + x1) / 2.0, cy=(y0 + y1) / 2.0,
                 top=top, bot=bot, tilt=tilt, tilt_s=tilt_s, elong=elong, idx=idx)
- 
+
+
 def containment(a, b):
     """|a ∩ b| / min(|a|, |b|): 1.0 when the smaller mask lies entirely inside the bigger one."""
     x0, x1 = max(a.x0, b.x0), min(a.x1, b.x1)
@@ -108,12 +110,12 @@ def containment(a, b):
         return 0.0
     inter = np.count_nonzero(a.mask[y0:y1 + 1, x0:x1 + 1] & b.mask[y0:y1 + 1, x0:x1 + 1])
     return inter / max(1, min(a.area, b.area))
- 
- 
+
+
 def _to_numpy(x):
     return x.cpu().numpy() if hasattr(x, "cpu") else np.asarray(x)
- 
- 
+
+
 def build_candidates(masks, scores):
     """
     One Cand per non-empty mask (uid "V<i>", idx = position in `masks`).
@@ -129,17 +131,17 @@ def build_candidates(masks, scores):
         if c is not None:
             cands.append(c)
     return cands, W, H
- 
- 
+
+
 # ---------------------------------------------------------------------------
 # Shared pieces
 # ---------------------------------------------------------------------------
- 
+
 def is_post_like(c, H, params):
     """Cheap sanity filter so a half-gate blob or a stray speck is never ranked as a post."""
     return c.elong >= params.min_elong and c.tilt <= params.max_tilt and c.h >= params.min_height * H
- 
- 
+
+
 def assign_clusters(cands, W, params):
     """
     Union-find over candidates: link two when their masks overlap (containment >= params.containment)
@@ -149,20 +151,20 @@ def assign_clusters(cands, W, params):
     """
     n = len(cands)
     parent = list(range(n))
- 
+
     def find(i):
         while parent[i] != i:
             parent[i] = parent[parent[i]]
             i = parent[i]
         return i
- 
+
     for i in range(n):
         for j in range(i + 1, n):
             if abs(cands[i].cx - cands[j].cx) > params.same_post_dx * W:
                 continue
             if containment(cands[i], cands[j]) >= params.containment:
                 parent[find(j)] = find(i)
- 
+
     groups = {}
     for i in range(n):
         groups.setdefault(find(i), []).append(i)
@@ -171,15 +173,15 @@ def assign_clusters(cands, W, params):
         for k in idx:
             cands[k].cluster = cid
     return len(ordered)
- 
- 
+
+
 def choose_by_cluster(pool, W, min_sep):
     """Best SAM score per cluster, then the best 2 clusters that are >= min_sep*W apart."""
     groups = {}
     for c in pool:
         groups.setdefault(c.cluster, []).append(c)
     winners = {cid: max(g, key=lambda c: (round(c.score, 3), -c.area)) for cid, g in groups.items()}
- 
+
     chosen = []
     for c in sorted(winners.values(), key=lambda c: (-round(c.score, 3), c.area)):
         if all(abs(c.cx - k.cx) >= min_sep * W for k in chosen):
@@ -187,8 +189,8 @@ def choose_by_cluster(pool, W, min_sep):
         if len(chosen) == 2:
             break
     return sorted(chosen, key=lambda c: c.cx), winners, groups
- 
- 
+
+
 def pair_components(a, b, W, H, params):
     """
     Terms for the pair (a left of b), or None if the pair is not valid. The `size` term needs the
@@ -204,32 +206,43 @@ def pair_components(a, b, W, H, params):
     cut = a.y0 <= 0 or a.y1 >= H - 1 or b.y0 <= 0 or b.y1 >= H - 1
     if params.max_pair_aspect > 0 and not cut and sep > params.max_pair_aspect * min(a.h, b.h):
         return None
- 
+
     conf = (a.score + b.score) / 2.0
     length = min(a.h, b.h) / float(max(a.h, b.h))
     ang_top = math.degrees(math.atan2(b.top[1] - a.top[1], b.top[0] - a.top[0]))
     ang_bot = math.degrees(math.atan2(b.bot[1] - a.bot[1], b.bot[0] - a.bot[0]))
     par = 1.0 - min(1.0, abs(ang_top - ang_bot) / params.pair_parallel_tol)
- 
+
     # In the pair's own frame: a gate rolled by `roll` degrees (right end lower = positive) turns an
     # upright post into one whose signed tilt is -roll. A pair that is merely OFFSET vertically has a
     # joining line that is tilted while the posts are upright, so the mismatch is large.
     roll = (ang_top + ang_bot) / 2.0
     mismatch = (abs(a.tilt_s + roll) + abs(b.tilt_s + roll)) / 2.0
     level = 1.0 - min(1.0, mismatch / params.pair_level_tol)
- 
+
     return {"conf": conf, "len": length, "level": level, "par": par}, sep
- 
+
+
 def pair_weights(params):
+    if len(params.pair_weights) != len(PAIR_TERMS):
+        raise ValueError(f"pair_weights needs {len(PAIR_TERMS)} values, in this order {PAIR_TERMS}; "
+                         f"got {len(params.pair_weights)}: {tuple(params.pair_weights)}")
     total = float(sum(params.pair_weights))
     if total <= 0:
         raise ValueError("pair_weights must sum to > 0")
     return {k: float(v) / total for k, v in zip(PAIR_TERMS, params.pair_weights)}
- 
+
+
 def rank_pairs(pool, W, H, params):
     """
     All valid pairs from `pool`, best first, as tuples (total, components, left, right, separation_px).
-    The `size` component is the pair's separation relative to the widest valid pair in this image.
+    Two components need the other valid pairs, so they are added here, both relative to this image:
+      size    the pair's horizontal separation / the widest valid pair's separation
+      height  the pair's SHORTER post height / the largest shorter-post height of any valid pair
+              (the shorter post, so one tall post paired with a small noisy pole does not score well)
+    Height is credited per POST, not per mask: every mask in an overlap cluster is credited with the
+    height of that cluster's best-SAM-score mask. Otherwise a "post + reflection" mask would beat the
+    clean mask just for being taller, which is exactly the mistake this module exists to avoid.
     """
     pool = sorted(pool, key=lambda c: -c.score)[:MAX_PAIR_CANDS]
     raw = []
@@ -238,16 +251,22 @@ def rank_pairs(pool, W, H, params):
         res = pair_components(left, right, W, H, params)
         if res is not None:
             raw.append((left, right, res[0], res[1]))
- 
+
     weights = pair_weights(params)
     max_sep = max((r[3] for r in raw), default=1.0)
+    _, winners, _ = choose_by_cluster(pool, W, params.min_post_sep)
+    post_h = lambda c: winners[c.cluster].h              # same height for every mask of one post
+    max_short = max((min(post_h(r[0]), post_h(r[1])) for r in raw), default=1.0)
     scored = []
     for left, right, comps, sep in raw:
-        comps = dict(comps, size=sep / max_sep)          # relative: the widest valid pair gets 1.0
+        comps = dict(comps,
+                     size=sep / max_sep,                                          # widest valid pair gets 1.0
+                     height=min(post_h(left), post_h(right)) / float(max_short))  # tallest-posted pair gets 1.0
         scored.append((sum(weights[k] * comps[k] for k in PAIR_TERMS), comps, left, right, sep))
     scored.sort(key=lambda t: -t[0])
     return scored
- 
+
+
 def prepare(masks, scores, params):
     """Candidates -> clusters -> post-like pool. Returns (pool, W, H, n_clusters)."""
     cands, W, H = build_candidates(masks, scores)
@@ -255,17 +274,18 @@ def prepare(masks, scores, params):
         c.post_like = is_post_like(c, H, params)
     n_clusters = assign_clusters(cands, W, params)
     return [c for c in cands if c.post_like], W, H, n_clusters
- 
+
+
 # ---------------------------------------------------------------------------
 # The three selectors
 # ---------------------------------------------------------------------------
- 
+
 def select_posts_cluster(masks, scores, params=DEFAULTS):
     pool, W, _H, _n = prepare(masks, scores, params)
     posts, _, _ = choose_by_cluster(pool, W, params.min_post_sep)
     return [c.idx for c in posts]
- 
- 
+
+
 def select_posts_pairwise(masks, scores, params=DEFAULTS):
     pool, W, H, _n = prepare(masks, scores, params)
     scored = rank_pairs(pool, W, H, params)
@@ -276,6 +296,7 @@ def select_posts_pairwise(masks, scores, params=DEFAULTS):
     posts, _, _ = choose_by_cluster(pool, W, params.min_post_sep)
     return [c.idx for c in sorted(posts, key=lambda c: -c.score)[:1]]
 
+
 def select_posts_area(masks, scores, params=DEFAULTS):
     """Previous behaviour: largest contour area (+ the second largest if >= area_ratio of it)."""
     import cv2                                   # lazy: the other selectors do not need it
@@ -284,7 +305,7 @@ def select_posts_area(masks, scores, params=DEFAULTS):
     for m in masks:
         contours, _ = cv2.findContours(m * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         areas.append(max((cv2.contourArea(c) for c in contours), default=0.0))
- 
+
     order = np.argsort(areas)[::-1].tolist()
     keep = []
     if order and areas[order[0]] > 0:
@@ -294,4 +315,3 @@ def select_posts_area(masks, scores, params=DEFAULTS):
         elif len(order) > 1:
             print(f"    -> Discarding second post. Ratio: {areas[order[1]] / areas[order[0]]:.2f} < {params.area_ratio}")
     return keep
-
