@@ -50,7 +50,7 @@ def process_dataset(input_dir, output_dir, device_str, visualize=False, resume=F
     load_end = time.time()
     print(f"Model loaded in: {load_end - load_start:.2f} seconds\n")
 
-    prompts = ["vertical black pole"] # "horizontal black pole"
+    prompts = ["vertical pole"]
 
     print(f"Running sequential processing for {[p for p in prompts]}")
 
