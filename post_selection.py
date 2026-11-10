@@ -1,4 +1,5 @@
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 from itertools import combinations
 from types import SimpleNamespace
@@ -28,7 +29,17 @@ DEFAULTS = SimpleNamespace(
     max_pair_aspect=2.6,       # skip pairs wider than this x the shorter post's height (0 = off)
     # area baseline
     area_ratio=0.5,            # second-largest must be at least this fraction of the largest
+    # crossbar (--enrich only)
+    max_bar_tilt=30.0,         # max degrees off horizontal
+    min_bar_coverage=0.8,      # fraction of the post-to-post span the bar must cover
+    bar_overhang=0.10,         # how far (fraction of span) the bar may stick out past each post
+    bar_below_tol=0.015,       # slack (fraction of image height) for "the bar sits at the post tops"
 )
+
+# ---- crossbar constants (not in DEFAULTS: they describe the gate, not the camera) ----
+STUB_FRAC = 0.15        # bar centreline may sit this fraction of a post's height ABOVE its mask top
+BAR_UPPER_FRAC = 0.60   # ...and up to this fraction BELOW it (a reflection-inflated mask has its top too high)
+BAR_TIE = 0.05          # bars scoring within this of the best are tied; the LOWER one wins (real, not reflected)
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +326,84 @@ def select_posts_area(masks, scores, params=DEFAULTS):
         elif len(order) > 1:
             print(f"    -> Discarding second post. Ratio: {areas[order[1]] / areas[order[0]]:.2f} < {params.area_ratio}")
     return keep
+
+
+# ---------------------------------------------------------------------------
+# Crossbar (only used by the --enrich export)
+# ---------------------------------------------------------------------------
+
+def fit_centerline(mask):
+    """Straight-line fit y = m*x + b through the per-column mean y of a (thin, roughly horizontal) mask."""
+    ys, xs = np.nonzero(mask)
+    if xs.size == 0:
+        return None
+    xmin = xs.min()
+    counts = np.bincount(xs - xmin)
+    sums = np.bincount(xs - xmin, weights=ys)
+    ok = counts > 0
+    if ok.sum() < 3:
+        return None
+    cols = np.nonzero(ok)[0] + xmin
+    m, b = np.polyfit(cols, sums[ok] / counts[ok], 1)
+    return float(m), float(b)
+
+
+def select_crossbar(bar_masks, bar_scores, post_masks, params=DEFAULTS):
+    """
+    Which "horizontal pole" instance is the gate's crossbar? Returns (index into bar_masks or None, note).
+
+    The bar is defined by the two posts it hangs between, so this needs both `post_masks` (the cleaned
+    left/right post masks). A candidate must be thin, nearly horizontal, span the posts (coverage), not
+    stick out past them (rejects wall lines), and sit at the post tops. Of the survivors the best SAM
+    score wins; scores within BAR_TIE are tied and the LOWER one wins, because a reflected bar is
+    above the real one in the image.
+
+    Same rules as the "crossbar reselect" method in experimentation/experimentation.py.
+    """
+    posts = [make_cand(f"P{i}", "V", 1.0, _to_numpy(m)) for i, m in enumerate(post_masks)]
+    posts = sorted([p for p in posts if p is not None], key=lambda c: c.cx)
+    if len(posts) < 2:
+        return None, f"need 2 posts to place a crossbar, got {len(posts)}"
+    L, R = posts[0], posts[-1]
+    span = max(R.cx - L.cx, 1.0)
+
+    bar_masks, bar_scores = _to_numpy(bar_masks), _to_numpy(bar_scores)
+    H = bar_masks.shape[1] if len(bar_masks) else 0
+    tol = params.bar_below_tol * H
+
+    keep, why = [], Counter()
+    for i, (mask, score) in enumerate(zip(bar_masks, bar_scores)):
+        c = make_cand(f"H{i}", "H", float(score), mask, idx=i)
+        if c is None:
+            why["empty"] += 1
+            continue
+        if c.elong < params.min_elong:
+            why["not thin"] += 1
+            continue
+        fit = fit_centerline(c.mask)
+        if fit is None:
+            why["too short to fit"] += 1
+            continue
+        m, b = fit
+        if math.degrees(math.atan(abs(m))) > params.max_bar_tilt:
+            why["too tilted"] += 1
+            continue
+        coverage = max(0.0, min(c.x1, R.cx) - max(c.x0, L.cx)) / span
+        if coverage < params.min_bar_coverage:
+            why["does not span the posts"] += 1
+            continue
+        if (L.cx - c.x0) > params.bar_overhang * span or (c.x1 - R.cx) > params.bar_overhang * span:
+            why["sticks out past the posts"] += 1
+            continue
+        if not all(s.y0 - STUB_FRAC * s.h - tol <= m * s.cx + b <= s.y0 + BAR_UPPER_FRAC * s.h for s in (L, R)):
+            why["not at the post tops"] += 1
+            continue
+        keep.append(c)
+
+    if not keep:
+        reasons = ", ".join(f"{k}: {v}" for k, v in why.items()) or "no horizontal candidates"
+        return None, f"no crossbar among {len(bar_masks)} horizontal candidates ({reasons})"
+    best = max(c.score for c in keep)
+    tied = [c for c in keep if c.score >= best - BAR_TIE]
+    choice = max(tied, key=lambda c: c.cy)             # lowest in the image = the real bar, not its reflection
+    return choice.idx, f"{len(keep)} of {len(bar_masks)} horizontal candidates pass the filters"
