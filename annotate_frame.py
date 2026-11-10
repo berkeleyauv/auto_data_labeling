@@ -6,16 +6,18 @@ from utils import (
     keep_largest_component,
     get_labeled_corners,
     get_labeled_corners_area,
+    get_part_boxes,
 )
 from post_selection import (
+    select_crossbar,
     select_posts_area,
     select_posts_cluster,
     select_posts_pairwise,
 )
 
-select_posts = select_posts_cluster
+select_posts = select_posts_pairwise
 
-confidence_threshold = 0.5
+confidence_threshold = 0.3
 
 def process_frame(image, processor, model, prompts, device):
     inference_start = time.time()
@@ -93,3 +95,52 @@ def process_frame(image, processor, model, prompts, device):
     else:
         print("No instances found for any of the provided prompts.")
         return None, None
+
+
+# ---------------------------------------
+#   --enrich: part boxes (posts + crossbar)
+# ---------------------------------------
+
+BAR_PROMPT = "horizontal pole"
+
+def find_crossbar_mask(image, processor, model, device, post_masks):
+    """
+    Second SAM3 pass with the crossbar prompt; returns the mask (numpy) that spans the two posts, or None.
+    Needs two posts: the bar is defined by the posts it hangs between.
+    """
+    if post_masks is None or len(post_masks) < 2:
+        print("  -> Crossbar: needs two posts, skipping")
+        return None
+
+    print(f"  -> Processing: '{BAR_PROMPT}'")
+    inputs = processor(images=image, text=BAR_PROMPT, return_tensors="pt").to(device)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    results = processor.post_process_instance_segmentation(
+        outputs,
+        threshold=confidence_threshold,
+        mask_threshold=confidence_threshold,
+        target_sizes=[image.size[::-1]],
+    )[0]
+
+    if len(results["masks"]) == 0:
+        print("    -> Crossbar: SAM3 found no horizontal pole")
+        return None
+
+    bar_masks = results["masks"].cpu().numpy().astype(np.uint8)
+    bar_scores = results["scores"].detach().float().cpu().numpy()
+    idx, note = select_crossbar(bar_masks, bar_scores, post_masks)
+    print(f"    -> Crossbar: {note}")
+    return None if idx is None else bar_masks[idx]
+
+
+def process_parts(image, processor, model, device, post_masks):
+    """
+    Boxes for the --enrich label: left post, right post (from the cleaned post masks process_frame
+    returned) and the crossbar. Returns {"left_post", "middle_divider", "right_post", "crossbar"},
+    each [x_min, y_min, x_max, y_max] in pixels or None. None overall when there are no posts.
+    """
+    if post_masks is None:
+        return None
+    bar_mask = find_crossbar_mask(image, processor, model, device, post_masks)
+    return get_part_boxes(post_masks, bar_mask, image.width)

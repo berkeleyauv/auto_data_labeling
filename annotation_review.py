@@ -4,11 +4,15 @@ import json
 from pathlib import Path
 from PIL import Image, ImageDraw
 from utils import (
+    EDITABLE_PARTS,
     describe_gate,
+    describe_parts,
     draw_JSON_kpts,
     export_no_gate_pose,
+    export_to_enrich,
     export_to_intro_detect,
     export_to_yolo,
+    load_parts,
     load_predictions,
     reviewed_stems,
 )
@@ -21,11 +25,13 @@ def launch_qa(json_path,
     skip_truncated=False,
     images="none",
     resume=False,
+    enrich=False,
+    parts_path=None,
 ):
 
     print(f"Reading JSON from {json_path}")
     print(f"Reading images from {image_dir}")
-    print(f"Export format: {export_format}")
+    print(f"Export format: {'enrich (--format is ignored)' if enrich else export_format}")
 
     raw_preds = load_predictions(json_path)
 
@@ -34,9 +40,20 @@ def launch_qa(json_path,
     labels_dir = image_dir.parent / "labels"
     detect_dir = Path(detect_dir) if detect_dir else image_dir.parent / "intro_detect"
     
+    # --enrich: the contiguous gate + parts label goes to its own folder, and pose/detect are NOT written
+    enrich_dir = image_dir.parent / "labels_enrich"
+    raw_parts = {}
+    if enrich:
+        parts_path = Path(parts_path) if parts_path else Path(json_path).parent / "raw_parts.json"
+        if not parts_path.is_file():
+            raise SystemExit(f"--enrich needs {parts_path} (written by annotate_dataset.py --enrich). Pass --parts_path if it is elsewhere.")
+        print(f"Reading part boxes from {parts_path}")
+        raw_parts = load_parts(parts_path, img_fn)
+
     already_reviewed = 0
     if resume:
-        done = reviewed_stems(labels_dir, detect_dir)
+        # enrich_dir has no manifest.csv, so passing it twice just means "has a label in enrich_dir"
+        done = reviewed_stems(enrich_dir, enrich_dir) if enrich else reviewed_stems(labels_dir, detect_dir)
         remaining = [fn for fn in img_fn if Path(fn).stem not in done]
         already_reviewed = len(img_fn) - len(remaining)
         img_fn = remaining
@@ -47,6 +64,9 @@ def launch_qa(json_path,
     
     do_pose = export_format in ("pose", "both")
     do_detect = export_format in ("detect", "both")
+    do_enrich = enrich
+    if enrich:
+        do_pose = do_detect = False
 
     # Result of the most recent export, shown under the image
     last_msg = [""]
@@ -74,6 +94,17 @@ def launch_qa(json_path,
             )
             btn_remove = gr.Button("Remove Selected Corner")
 
+        # --enrich: drop a part box that is wrong (it is then exported as 0 0 0 0)
+        if enrich:
+            with gr.Row():
+                part_selector = gr.Radio(
+                    choices=list(EDITABLE_PARTS),
+                    value=EDITABLE_PARTS[0],
+                    label="Part box",
+                    interactive=True
+                )
+                btn_remove_part = gr.Button("Remove Selected Part")
+
         # Accept button
         with gr.Row():
             btn_accept = gr.Button("Accept & Export")
@@ -90,13 +121,15 @@ def launch_qa(json_path,
             filename = img_fn[index]
             img_path = image_dir / filename
             kpts = raw_preds[filename]
-            return draw_JSON_kpts(img_path, kpts)
+            return draw_JSON_kpts(img_path, kpts, raw_parts.get(filename) if enrich else None)
 
         # Text shown under image to inform last export results + preview of orientation
         def status_text(index):
             if index >= len(img_fn):
                 return last_msg[0] or "All images reviewed."
             preview = describe_gate(raw_preds[img_fn[index]], skip_truncated)
+            if enrich:
+                preview += "\n\n" + describe_parts(raw_parts[img_fn[index]])
             return f"{last_msg[0]}\n\n{preview}" if last_msg[0] else preview
 
         def render_all(index):
@@ -124,6 +157,15 @@ def launch_qa(json_path,
  
             return render_all(index)
 
+        # Delete the selected part box (enrich only)
+        def remove_part(index, part):
+            if index >= len(img_fn):
+                return render_all(index)
+
+            raw_parts[img_fn[index]][part] = None
+
+            return render_all(index)
+
         # Write whichever exports were requested for the current image
         def export_current(index, no_gate=False):
             filename = img_fn[index]
@@ -141,6 +183,12 @@ def launch_qa(json_path,
                                    allow_truncated=not skip_truncated)
  
             msg = f"Last: {filename} saved"
+            if do_enrich:
+                status = export_to_enrich(filename, points, raw_parts[filename], img_width, img_height,
+                                          enrich_dir, no_gate=no_gate, allow_truncated=not skip_truncated)
+                msg = {"exported": f"Last: {filename} -> enrich label written",
+                       "no_gate": f"Last: {filename} -> no gate (empty label)",
+                       "skipped": f"Last: {filename} SKIPPED in enrich export (corners form no valid box)"}[status]
             if do_detect:
                 row = export_to_intro_detect(
                     filename, points, img_path, img_width, img_height, detect_dir,
@@ -194,6 +242,13 @@ def launch_qa(json_path,
         )
 
 
+        if enrich:
+            btn_remove_part.click(
+                fn=remove_part,
+                inputs=[curr_idx, part_selector],
+                outputs=[img_display, gate_info],
+            )
+
         btn_accept.click(
             fn=accept_and_next,
             inputs=curr_idx,
@@ -226,6 +281,12 @@ if __name__ == "__main__":
     parser.add_argument("--images", type=str, choices=["none", "copy", "link"], default="none",
                         help="detect export: also copy/symlink each image next to its label (the current intro-project `split` expects that)")
  
+    # Not a standard YOLO format: gate box + corners + left post / middle divider / right post / crossbar boxes on one line
+    parser.add_argument("--enrich", action="store_true",
+                        help="write the contiguous enrich label to <dataset>/labels_enrich/ INSTEAD of pose/detect (needs raw_parts.json from annotate_dataset.py --enrich)")
+    parser.add_argument("--parts_path", type=str, default=None,
+                        help="--enrich: path to raw_parts.json (default: next to --json_path)")
+
     args = parser.parse_args()
     launch_qa(
         Path(args.json_path),
@@ -236,4 +297,6 @@ if __name__ == "__main__":
         skip_truncated=args.skip_truncated,
         images=args.images,
         resume=args.resume,
+        enrich=args.enrich,
+        parts_path=args.parts_path,
     )

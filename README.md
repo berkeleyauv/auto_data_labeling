@@ -171,3 +171,25 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 **Images:** by default only labels are written (`--images none`). `--images copy` (or `link` to symlink instead of copying) also places each image next to its label, which is the layout the intro project's current `split` expects.
  
 **Handing the data to the intro project:** either use `--images copy` and put the contents of `intro_detect/` into the intro project's `data/raw/`, or point the intro project's `split` at the images and `intro_detect/` separately once it supports a separate labels folder. Warning: the intro project currently still treats class `0` as `gate_left`, so these labels are only meaningful there after it has been moved to a single class.
+## Enrich Export (`--enrich`, experimental)
+
+Collects as much as possible about each gate into one label: the gate box and corners **plus** a box for each part. This is **not a standard YOLO format**, so it is its own mode and never mixes with the pose/detect exports.
+
+```
+class x y w h  x1 y1 v1  x2 y2 v2  x3 y3 v3  x4 y4 v4  left_post(x y w h)  middle_divider(x y w h)  right_post(x y w h)  crossbar(x y w h)
+```
+
+One line, 33 numbers, normalized by the image size. `x y w h` is the box centre and size (like YOLO). The corners are TL, TR, BL, BR with `v = 2` visible or `0` missing. A part that was not found is `0 0 0 0`, so later columns never shift. **The middle divider is not detected yet and is always `0 0 0 0`.**
+
+```bash
+# 1. Inference: same command plus --enrich. Writes raw_predictions.json (unchanged) and raw_parts.json
+sbatch submit_inference.sh --input_dir ./data/your_dataset_name/raw_imgs --output_dir ./data/your_dataset_name/predictions --enrich --visualize
+
+# 2. Review: the part boxes are drawn on the image. Writes <dataset>/labels_enrich/ INSTEAD of labels/ and intro_detect/
+bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./data/your_dataset_name/predictions/raw_predictions.json --enrich
+```
+
+- The posts' boxes come from the same cleaned masks the corners come from. The crossbar needs a **second SAM3 pass** (`"horizontal pole"`) and is only looked for when two posts were found; it must span the posts and sit at their tops (`post_selection.select_crossbar`).
+- In the review tool, **Remove Selected Part** drops a wrong box (it is exported as `0 0 0 0`). Boxes cannot be moved, only removed. Deleting both corners of a side also drops that post's box.
+- `--parts_path` points at `raw_parts.json` if it is not next to `--json_path`. `--resume` works as usual (it looks in `labels_enrich/`).
+- Single-post gates and cut-off gates export the same way as in the other modes (`--skip_truncated` applies).

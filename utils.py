@@ -291,7 +291,7 @@ def load_predictions(json_path):
     return {filename: (kpts if isinstance(kpts, dict) else {}) for filename, kpts in raw.items()}
 
 
-def draw_JSON_kpts(img_path, kpts: dict):
+def draw_JSON_kpts(img_path, kpts: dict, parts=None):
     img = Image.open(img_path).convert("RGB")
     draw = ImageDraw.Draw(img)
     
@@ -301,6 +301,8 @@ def draw_JSON_kpts(img_path, kpts: dict):
             x, y = coords
             draw.ellipse([x - r, y - r, x + r, y + r], fill="cyan", outline="black", width=2)
             draw.text((x + r + 5, y - 10), label, fill="yellow")
+    if parts:                       # --enrich only
+        draw_parts(draw, parts)
     return img
 
 def missing_sides(points):
@@ -587,3 +589,151 @@ def export_to_intro_detect(filename, points, img_path, img_width, img_height, ou
     update_manifest(out_dir / "manifest.csv", row)
     print(f"Saved (detect): {out_dir / (stem + '.txt')}  [{row['status']}]")
     return row
+
+# ---------------------------------------
+#   ENRICH EXPORT (--enrich): gate + part boxes
+# ---------------------------------------
+# NOT a standard YOLO format. One line per image, every value on that line in a fixed order:
+#
+#   class x y w h  x1 y1 v1  x2 y2 v2  x3 y3 v3  x4 y4 v4  | left post | middle divider | right post | crossbar
+#   \______ gate box + corners (same as the pose label) __/    x y w h     x y w h         x y w h     x y w h
+#
+# 33 numbers. All x y w h are box CENTRE + size, normalised by the image size (like YOLO). Corners are
+# TL TR BL BR with v = 2 (visible) or 0 (missing, x = y = 0). A part that was not found is "0 0 0 0",
+# so the columns after it never move. The middle divider is not detected yet: always "0 0 0 0".
+
+PART_NAMES = ("left_post", "middle_divider", "right_post", "crossbar")      # column order in the label
+EDITABLE_PARTS = ("left_post", "right_post", "crossbar")                    # the divider is not detected
+ENRICH_CLASS_ID = 0
+PART_COLORS = {"left_post": "lime", "middle_divider": "orange", "right_post": "magenta", "crossbar": "red"}
+
+
+def mask_box(mask):
+    """[x_min, y_min, x_max, y_max] pixel box of a mask (max exclusive), or None if the mask is empty."""
+    if hasattr(mask, "cpu"):
+        mask = mask.cpu().numpy()
+    ys, xs = np.nonzero(np.asarray(mask) > 0)
+    if xs.size == 0:
+        return None
+    return [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
+
+
+def get_part_boxes(post_masks, bar_mask, image_width):
+    """
+    Pixel boxes for the label's parts: {"left_post", "middle_divider", "right_post", "crossbar"}, each
+    [x_min, y_min, x_max, y_max] or None when not found. Posts are ordered exactly like
+    get_labeled_corners_area (by mean x; a lone post is left if it is in the left half of the image).
+    """
+    posts = []
+    for mask in post_masks:
+        if hasattr(mask, "cpu"):
+            mask = mask.cpu().numpy()
+        box = mask_box(mask)
+        if box is not None:
+            posts.append((float(np.nonzero(np.asarray(mask) > 0)[1].mean()), box))
+    posts.sort(key=lambda t: t[0])
+
+    parts = {name: None for name in PART_NAMES}
+    if len(posts) == 1:
+        side = "left_post" if posts[0][0] < image_width / 2 else "right_post"
+        parts[side] = posts[0][1]
+    elif len(posts) >= 2:
+        parts["left_post"], parts["right_post"] = posts[0][1], posts[-1][1]
+    if bar_mask is not None:
+        parts["crossbar"] = mask_box(bar_mask)
+    return parts
+
+
+def draw_parts(draw, parts):
+    """Outline each found part box on an ImageDraw (QA tool and --visualize)."""
+    for name in PART_NAMES:
+        box = (parts or {}).get(name)
+        if box is not None:
+            x0, y0, x1, y1 = box
+            draw.rectangle([x0, y0, x1, y1], outline=PART_COLORS[name], width=4)
+            draw.text((x0 + 6, y0 + 4), name, fill=PART_COLORS[name])
+
+
+def load_parts(parts_path, filenames):
+    """raw_parts.json -> {filename: {part: box or None}}. A missing/null entry means no parts were found."""
+    with open(parts_path, "r") as f:
+        raw = json.load(f)
+    out = {}
+    for fn in filenames:
+        entry = raw.get(fn) if isinstance(raw.get(fn), dict) else {}
+        out[fn] = {name: (entry.get(name) if name in entry else None) for name in PART_NAMES}
+    return out
+
+
+def describe_parts(parts):
+    """One-line summary of which parts will be exported, for the review UI."""
+    found = [name.replace("_", " ") for name in EDITABLE_PARTS if (parts or {}).get(name) is not None]
+    missing = [name.replace("_", " ") for name in EDITABLE_PARTS if (parts or {}).get(name) is None]
+    text = "Parts: " + (", ".join(found) if found else "none found")
+    if missing:
+        text += " | exported as 0 0 0 0: " + ", ".join(missing)
+    return text + " | middle divider is not detected (always 0 0 0 0)"
+
+
+def _norm_box(box, img_width, img_height):
+    """[x0,y0,x1,y1] pixels -> 'cx cy w h' normalised and clipped to the image; None -> zeros."""
+    if box is None:
+        return "0.000000 0.000000 0.000000 0.000000"
+    x0, y0, x1, y1 = box
+    x0, x1 = max(0.0, min(x0, img_width)), max(0.0, min(x1, img_width))
+    y0, y1 = max(0.0, min(y0, img_height)), max(0.0, min(y1, img_height))
+    if x1 <= x0 or y1 <= y0:
+        return "0.000000 0.000000 0.000000 0.000000"
+    return (f"{(x0 + x1) / 2 / img_width:.6f} {(y0 + y1) / 2 / img_height:.6f} "
+            f"{(x1 - x0) / img_width:.6f} {(y1 - y0) / img_height:.6f}")
+
+
+def export_to_enrich(filename, points, parts, img_width, img_height, labels_dir,
+                     no_gate=False, allow_truncated=True):
+    """
+    Write the contiguous enrich label (see the format above) to labels_dir/<stem>.txt.
+
+    The gate box and corners are exactly the pose label's. A side with neither of its corners
+    (TL+BL / TR+BR) loses its post box too: if the reviewer deleted that post's corners, the box is
+    not trusted either. no_gate=True writes an EMPTY file (confirmed negative), like the pose export.
+
+    Returns "exported", "no_gate" or "skipped" (corners that form no valid box: nothing written).
+    """
+    labels_dir = Path(labels_dir)
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    txt_path = labels_dir / Path(filename).with_suffix(".txt").name
+
+    if no_gate:
+        txt_path.write_text("")
+        print(f"Saved (enrich, no gate): {txt_path}")
+        return "no_gate"
+
+    box = compute_gate_box(points, img_width, img_height, allow_truncated=allow_truncated)
+    if box is None:
+        if any(coords is not None for coords in points.values()):
+            print(f"Skipped (enrich) {filename}: visible corners do not form a valid box")
+        if txt_path.exists():
+            txt_path.unlink()
+        return "skipped"
+
+    parts = dict(parts or {})
+    if points.get("TL") is None and points.get("BL") is None:
+        parts["left_post"] = None
+    if points.get("TR") is None and points.get("BR") is None:
+        parts["right_post"] = None
+
+    x_min, y_min, x_max, y_max = box
+    gate = _norm_box([x_min, y_min, x_max, y_max], img_width, img_height)
+
+    kp = []
+    for corner in CORNERS:
+        coords = points.get(corner)
+        if coords is not None:
+            kp.append(f"{coords[0] / img_width:.6f} {coords[1] / img_height:.6f} 2")
+        else:
+            kp.append("0.000000 0.000000 0")
+
+    boxes = [_norm_box(parts.get(name), img_width, img_height) for name in PART_NAMES]
+    txt_path.write_text(f"{ENRICH_CLASS_ID} {gate} {' '.join(kp)} {' '.join(boxes)}\n")
+    print(f"Saved (enrich): {txt_path}")
+    return "exported"
