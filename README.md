@@ -53,9 +53,10 @@ All datasets live under `./data/` and should maintain this 3-subfolder directory
 ```text
 data/your_dataset_name/
 ├── raw_imgs/         # Original input frames (.jpg, .jpeg, .png)
-├── predictions/       # Raw model outputs (raw_predictions.json; plus visualizations/ and failed_images.json when produced)
+├── predictions/       # Raw model outputs (raw_predictions.json, plus raw_parts.json with --enrich; plus visualizations/ and failed_images.json when produced)
 └── labels/           # Final exported annotations (.txt files)
 └── intro_detect/     # Single-class YOLO-detect labels + manifest.csv (only with --format detect/both)
+└── labels_enrich/    # One-line gate + part-box labels (only with --enrich, see Enrich Export below)
 ```
 
 **2. Class IDs**
@@ -176,10 +177,10 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 Collects as much as possible about each gate into one label: the gate box and corners **plus** a box for each part. This is **not a standard YOLO format**, so it is its own mode and never mixes with the pose/detect exports.
 
 ```
-class x y w h  x1 y1 v1  x2 y2 v2  x3 y3 v3  x4 y4 v4  left_post(x y w h)  middle_divider(x y w h)  right_post(x y w h)  crossbar(x y w h)
+class x y w h  x1 y1 v1  x2 y2 v2  x3 y3 v3  x4 y4 v4  left_post(x y w h)  right_post(x y w h)  crossbar(x y w h)
 ```
 
-One line, 33 numbers, normalized by the image size. `x y w h` is the box centre and size (like YOLO). The corners are TL, TR, BL, BR with `v = 2` visible or `0` missing. A part that was not found is `0 0 0 0`, so later columns never shift. **The middle divider is not detected yet and is always `0 0 0 0`.**
+One line, 29 numbers (columns 0-28), normalized by the image size. `x y w h` is the box centre and size (like YOLO). The corners are TL, TR, BL, BR with `v = 2` visible or `0` missing. A part that was not found is `0 0 0 0`, so later columns never shift: left post is columns 17-20, right post 21-24, crossbar 25-28. The middle divider is not part of the label (it was dropped; to bring it back, add `"middle_divider"` to `PART_NAMES` in `utils.py`).
 
 ```bash
 # 1. Inference: same command plus --enrich. Writes raw_predictions.json (unchanged) and raw_parts.json
@@ -190,6 +191,10 @@ bash launch_QA.sh --image_dir ./data/your_dataset_name/raw_imgs --json_path ./da
 ```
 
 - The posts' boxes come from the same cleaned masks the corners come from. The crossbar needs a **second SAM3 pass** (`"horizontal pole"`) and is only looked for when two posts were found; it must span the posts and sit at their tops (`post_selection.select_crossbar`).
-- In the review tool, **Remove Selected Part** drops a wrong box (it is exported as `0 0 0 0`). Boxes cannot be moved, only removed. Deleting both corners of a side also drops that post's box.
+- In the review tool, pick the part (**Part box**), then pick what a click does (**Click action**):
+  - **Set corner**: the click moves the selected corner (the normal behaviour).
+  - **Move part box**: the click is the new **centre** of the selected part's box. Its size is kept, and it is pushed back inside the image near an edge.
+  - **Draw part box (2 clicks)**: click two opposite corners of the box, in any order. This also adds a box that was missing. A white cross marks the first click; **Cancel first corner** (or changing the part or action) throws it away. A box smaller than 4 px is rejected.
+  - **Remove Selected Part** drops a wrong box (it is exported as `0 0 0 0`). Deleting both corners of a side also drops that post's box.
 - `--parts_path` points at `raw_parts.json` if it is not next to `--json_path`. `--resume` works as usual (it looks in `labels_enrich/`).
 - Single-post gates and cut-off gates export the same way as in the other modes (`--skip_truncated` applies).
