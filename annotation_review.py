@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from PIL import Image, ImageDraw
 from utils import (
-    EDITABLE_PARTS,
+    PART_NAMES,
+    box_from_clicks,
     describe_gate,
     describe_parts,
     draw_JSON_kpts,
@@ -14,8 +15,13 @@ from utils import (
     export_to_yolo,
     load_parts,
     load_predictions,
+    move_box,
     reviewed_stems,
 )
+
+CLICK_CORNER = "Set corner"
+CLICK_MOVE = "Move part box"
+CLICK_DRAW = "Draw part box (2 clicks)"
 
 def launch_qa(json_path,
     image_dir,
@@ -60,7 +66,6 @@ def launch_qa(json_path,
         print(f"Resuming: {already_reviewed} images already reviewed, {len(img_fn)} left")
     do_pose = export_format in ("pose", "both")
     do_detect = export_format in ("detect", "both")
-
     
     do_pose = export_format in ("pose", "both")
     do_detect = export_format in ("detect", "both")
@@ -70,6 +75,9 @@ def launch_qa(json_path,
 
     # Result of the most recent export, shown under the image
     last_msg = [""]
+
+    click_msg = [""]
+    pending = [None]
 
     with gr.Blocks(title="Underwater Gate Pose Annotator") as app:
 
@@ -97,13 +105,21 @@ def launch_qa(json_path,
         # --enrich: drop a part box that is wrong (it is then exported as 0 0 0 0)
         if enrich:
             with gr.Row():
+                click_mode = gr.Radio(
+                    choices=[CLICK_CORNER, CLICK_MOVE, CLICK_DRAW],
+                    value=CLICK_CORNER,
+                    label="Click action",
+                    interactive=True
+                )
+            with gr.Row():
                 part_selector = gr.Radio(
-                    choices=list(EDITABLE_PARTS),
-                    value=EDITABLE_PARTS[0],
+                    choices=list(PART_NAMES),
+                    value=PART_NAMES[0],
                     label="Part box",
                     interactive=True
                 )
                 btn_remove_part = gr.Button("Remove Selected Part")
+                btn_cancel_click = gr.Button("Cancel first corner")
 
         # Accept button
         with gr.Row():
@@ -121,7 +137,14 @@ def launch_qa(json_path,
             filename = img_fn[index]
             img_path = image_dir / filename
             kpts = raw_preds[filename]
-            return draw_JSON_kpts(img_path, kpts, raw_parts.get(filename) if enrich else None)
+            img = draw_JSON_kpts(img_path, kpts, raw_parts.get(filename) if enrich else None)
+            
+            if enrich and pending[0] is not None and pending[0][0][0] == filename:
+                x, y = pending[0][1]
+                d = ImageDraw.Draw(img)
+                d.line([x - 24, y, x + 24, y], fill="white", width=3)
+                d.line([x, y - 24, x, y + 24], fill="white", width=3)
+            return img
 
         # Text shown under image to inform last export results + preview of orientation
         def status_text(index):
@@ -130,7 +153,8 @@ def launch_qa(json_path,
             preview = describe_gate(raw_preds[img_fn[index]], skip_truncated)
             if enrich:
                 preview += "\n\n" + describe_parts(raw_parts[img_fn[index]])
-            return f"{last_msg[0]}\n\n{preview}" if last_msg[0] else preview
+            head = "\n\n".join(m for m in (last_msg[0], click_msg[0] if enrich else "") if m)
+            return f"{head}\n\n{preview}" if head else preview
 
         def render_all(index):
             return render_image(index), status_text(index)
@@ -148,6 +172,53 @@ def launch_qa(json_path,
 
             return render_all(index)
 
+        # --enrich: one click handler for all three click actions (non-enrich keeps update_kp above)
+        def update_click(index, corner, mode, part, evt: gr.SelectData):
+            if index >= len(img_fn):
+                return render_all(index)
+ 
+            filename = img_fn[index]
+            x, y = evt.index
+ 
+            if mode == CLICK_CORNER:
+                pending[0] = None
+                click_msg[0] = ""
+                raw_preds[filename][corner] = [x, y]
+                return render_all(index)
+ 
+            with Image.open(image_dir / filename) as im:
+                img_width, img_height = im.size
+ 
+            if mode == CLICK_MOVE:
+                pending[0] = None
+                box = raw_parts[filename].get(part)
+                if box is None:
+                    click_msg[0] = f"There is no {part} box to move. Use '{CLICK_DRAW}' to add one."
+                else:
+                    raw_parts[filename][part] = move_box(box, x, y, img_width, img_height)
+                    click_msg[0] = f"Moved {part}: its centre is now ({x}, {y})."
+                return render_all(index)
+ 
+            # CLICK_DRAW: first click = one corner, second click = the opposite corner
+            if pending[0] is None or pending[0][0] != (filename, part):
+                pending[0] = ((filename, part), (x, y))
+                click_msg[0] = f"{part}: first corner at ({x}, {y}). Now click the opposite corner."
+            else:
+                box = box_from_clicks(pending[0][1], (x, y), img_width, img_height)
+                pending[0] = None
+                if box is None:
+                    click_msg[0] = f"That {part} box is too small. Click its first corner again."
+                else:
+                    raw_parts[filename][part] = box
+                    click_msg[0] = f"Drew {part}: {box}."
+            return render_all(index)
+ 
+        # Throw away a half-drawn box (also done when the click action or part changes)
+        def cancel_pending(index):
+            pending[0] = None
+            click_msg[0] = ""
+            return render_all(index)
+
         # Delete selected corner
         def remove_kp(index, corner):
             if index >= len(img_fn):
@@ -162,7 +233,9 @@ def launch_qa(json_path,
             if index >= len(img_fn):
                 return render_all(index)
 
+            pending[0] = None
             raw_parts[img_fn[index]][part] = None
+            click_msg[0] = f"Removed {part} (exported as 0 0 0 0)."
 
             return render_all(index)
 
@@ -201,6 +274,8 @@ def launch_qa(json_path,
                 else:
                     msg = f"Last: {filename} SKIPPED in detect export ({row['reason']})"
             last_msg[0] = msg
+            pending[0] = None
+            click_msg[0] = ""
 
         # Accepting the corner points
         def accept_and_next(index):
@@ -229,25 +304,39 @@ def launch_qa(json_path,
 
         app.load(fn=render_all, inputs=curr_idx, outputs=[img_display, gate_info])
 
-        img_display.select(
-            fn=update_kp,
-            inputs=[curr_idx, corner_selector],
-            outputs=[img_display, gate_info],
-        )
-
+        if enrich:
+            img_display.select(
+                fn=update_click,
+                inputs=[curr_idx, corner_selector, click_mode, part_selector],
+                outputs=[img_display, gate_info],
+            )
+        else:
+            img_display.select(
+                fn=update_kp,
+                inputs=[curr_idx, corner_selector],
+                outputs=[img_display, gate_info],
+            )
+ 
         btn_remove.click(
             fn=remove_kp,
             inputs=[curr_idx, corner_selector],
             outputs=[img_display, gate_info],
         )
-
-
+ 
+ 
         if enrich:
             btn_remove_part.click(
                 fn=remove_part,
                 inputs=[curr_idx, part_selector],
                 outputs=[img_display, gate_info],
             )
+            btn_cancel_click.click(
+                fn=cancel_pending,
+                inputs=curr_idx,
+                outputs=[img_display, gate_info],
+            )
+            click_mode.change(fn=cancel_pending, inputs=curr_idx, outputs=[img_display, gate_info])
+            part_selector.change(fn=cancel_pending, inputs=curr_idx, outputs=[img_display, gate_info])
 
         btn_accept.click(
             fn=accept_and_next,
