@@ -50,11 +50,15 @@ def process_frame(image, processor, model, prompts, device):
             
             # Convert tensor masks to numpy arrays for OpenCV
             masks_np = masks.cpu().numpy().astype(np.uint8)
-            valid_indices = select_posts(masks_np, scores.detach().float().cpu().numpy())
+            scores_np = scores.detach().float().cpu().numpy()
+            valid_indices = select_posts(masks_np, scores_np)
 
             if len(valid_indices) == 0:
                 print("    -> No instance passed post selection for this prompt")
                 continue
+
+            print(f"    -> Selected candidates {[int(i) for i in valid_indices]} of {len(masks)}, "
+                  f"scores {[round(float(scores_np[i]), 2) for i in valid_indices]}")
 
             # Filter the tensors
             filtered_masks = masks[valid_indices]
@@ -64,10 +68,17 @@ def process_frame(image, processor, model, prompts, device):
             cleaned_masks = []
             cleaned_boxes = []
             
-            for mask, box in zip(filtered_masks, filtered_boxes):
+            for k, (mask, box) in enumerate(zip(filtered_masks, filtered_boxes)):
                 c_mask, c_box = keep_largest_component(mask, box)
                 cleaned_masks.append(c_mask)
                 cleaned_boxes.append(c_box)
+
+                # Log what cleaning did: a tall post shrinking to a small blob shows up here
+                before = int((mask.cpu().numpy() > 0).sum())
+                after = int((c_mask.cpu().numpy() > 0).sum())
+                print(f"    -> mask {k}: {before} -> {after} px after cleaning, box {[int(v) for v in c_box.tolist()]}")
+                if before > 0 and after < 0.5 * before:
+                    print(f"    !! cleaning removed {100 * (1 - after / before):.0f}% of mask {k}")
                 
             filtered_masks = torch.stack(cleaned_masks)
             filtered_boxes = torch.stack(cleaned_boxes)
@@ -91,11 +102,12 @@ def process_frame(image, processor, model, prompts, device):
         print(f"Scores: {combined_scores.tolist()}")
         print("Keypoints stored sucessfully")
 
-        return get_labeled_corners_area(combined_masks, image.width), combined_masks
+        corners = get_labeled_corners_area(combined_masks, image.width)
+        print("Corners: " + str({k: None if v is None else (round(float(v[0])), round(float(v[1]))) for k, v in corners.items()}))
+        return corners, combined_masks
     else:
         print("No instances found for any of the provided prompts.")
         return None, None
-
 
 # ---------------------------------------
 #   --enrich: part boxes (posts + crossbar)
