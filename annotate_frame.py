@@ -18,6 +18,7 @@ from post_selection import (
 select_posts = select_posts_pairwise
 
 confidence_threshold = 0.3
+mask_threshold = 0.5
 
 def process_frame(image, processor, model, prompts, device):
     inference_start = time.time()
@@ -38,7 +39,7 @@ def process_frame(image, processor, model, prompts, device):
         results = processor.post_process_instance_segmentation(
             outputs,
             threshold=confidence_threshold,
-            mask_threshold=confidence_threshold,
+            mask_threshold=mask_threshold,
             target_sizes=[image.size[::-1]], 
         )[0]
         
@@ -131,7 +132,7 @@ def find_crossbar_mask(image, processor, model, device, post_masks):
     results = processor.post_process_instance_segmentation(
         outputs,
         threshold=confidence_threshold,
-        mask_threshold=confidence_threshold,
+        mask_threshold=mask_threshold,
         target_sizes=[image.size[::-1]],
     )[0]
 
