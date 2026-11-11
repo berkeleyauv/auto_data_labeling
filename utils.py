@@ -602,11 +602,10 @@ def export_to_intro_detect(filename, points, img_path, img_width, img_height, ou
 # TL TR BL BR with v = 2 (visible) or 0 (missing, x = y = 0). A part that was not found is "0 0 0 0",
 # so the columns after it never move. The middle divider is not detected yet: always "0 0 0 0".
 
-PART_NAMES = ("left_post", "middle_divider", "right_post", "crossbar")      # column order in the label
-EDITABLE_PARTS = ("left_post", "right_post", "crossbar")                    # the divider is not detected
+PART_NAMES = ("left_post", "right_post", "crossbar")      # column order in the label
 ENRICH_CLASS_ID = 0
-PART_COLORS = {"left_post": "lime", "middle_divider": "orange", "right_post": "magenta", "crossbar": "red"}
-
+PART_COLORS = {"left_post": "lime", "right_post": "magenta", "crossbar": "red"}
+MIN_BOX_PX = 4
 
 def mask_box(mask):
     """[x_min, y_min, x_max, y_max] pixel box of a mask (max exclusive), or None if the mask is empty."""
@@ -616,7 +615,6 @@ def mask_box(mask):
     if xs.size == 0:
         return None
     return [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
-
 
 def get_part_boxes(post_masks, bar_mask, image_width):
     """
@@ -643,7 +641,6 @@ def get_part_boxes(post_masks, bar_mask, image_width):
         parts["crossbar"] = mask_box(bar_mask)
     return parts
 
-
 def draw_parts(draw, parts):
     """Outline each found part box on an ImageDraw (QA tool and --visualize)."""
     for name in PART_NAMES:
@@ -652,7 +649,6 @@ def draw_parts(draw, parts):
             x0, y0, x1, y1 = box
             draw.rectangle([x0, y0, x1, y1], outline=PART_COLORS[name], width=4)
             draw.text((x0 + 6, y0 + 4), name, fill=PART_COLORS[name])
-
 
 def load_parts(parts_path, filenames):
     """raw_parts.json -> {filename: {part: box or None}}. A missing/null entry means no parts were found."""
@@ -667,13 +663,37 @@ def load_parts(parts_path, filenames):
 
 def describe_parts(parts):
     """One-line summary of which parts will be exported, for the review UI."""
-    found = [name.replace("_", " ") for name in EDITABLE_PARTS if (parts or {}).get(name) is not None]
-    missing = [name.replace("_", " ") for name in EDITABLE_PARTS if (parts or {}).get(name) is None]
+    found = [name.replace("_", " ") for name in PART_NAMES if (parts or {}).get(name) is not None]
+    missing = [name.replace("_", " ") for name in PART_NAMES if (parts or {}).get(name) is None]
     text = "Parts: " + (", ".join(found) if found else "none found")
     if missing:
         text += " | exported as 0 0 0 0: " + ", ".join(missing)
-    return text + " | middle divider is not detected (always 0 0 0 0)"
+    return text
 
+def move_box(box, cx, cy, img_width, img_height):
+    """
+    Move a pixel box so its CENTRE is at (cx, cy), keeping its size. The box is shifted back inside
+    the image if the click was near an edge (so it never gets squashed), and clipped only if it is
+    bigger than the image. Returns [x0, y0, x1, y1] ints.
+    """
+    x0, y0, x1, y1 = box
+    w, h = min(x1 - x0, img_width), min(y1 - y0, img_height)
+    nx0 = int(round(max(0, min(cx - w / 2, img_width - w))))
+    ny0 = int(round(max(0, min(cy - h / 2, img_height - h))))
+    return [nx0, ny0, nx0 + int(round(w)), ny0 + int(round(h))]
+ 
+def box_from_clicks(p1, p2, img_width, img_height):
+    """
+    Pixel box from two clicks on opposite corners (any order), clipped to the image.
+    Returns [x0, y0, x1, y1], or None if it would be smaller than MIN_BOX_PX in either direction.
+    """
+    x0, x1 = sorted((p1[0], p2[0]))
+    y0, y1 = sorted((p1[1], p2[1]))
+    x0, x1 = max(0, min(x0, img_width)), max(0, min(x1, img_width))
+    y0, y1 = max(0, min(y0, img_height)), max(0, min(y1, img_height))
+    if x1 - x0 < MIN_BOX_PX or y1 - y0 < MIN_BOX_PX:
+        return None
+    return [int(x0), int(y0), int(x1), int(y1)]
 
 def _norm_box(box, img_width, img_height):
     """[x0,y0,x1,y1] pixels -> 'cx cy w h' normalised and clipped to the image; None -> zeros."""
@@ -686,7 +706,6 @@ def _norm_box(box, img_width, img_height):
         return "0.000000 0.000000 0.000000 0.000000"
     return (f"{(x0 + x1) / 2 / img_width:.6f} {(y0 + y1) / 2 / img_height:.6f} "
             f"{(x1 - x0) / img_width:.6f} {(y1 - y0) / img_height:.6f}")
-
 
 def export_to_enrich(filename, points, parts, img_width, img_height, labels_dir,
                      no_gate=False, allow_truncated=True):
